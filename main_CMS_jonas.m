@@ -149,7 +149,7 @@ end
 
 mat.dg.params.permute_shell = true;
 mat.dg.params.rho = true;                          % false: phase/eigen basis, true: relative-coordinate rho basis
-mat.dg.params.rho_flux = 'central';                % rho solver: 'central' or legacy 'matrix-upwind'
+mat.dg.params.rho_flux = 'rusanov';                % rho solver: 'central' or legacy 'matrix-upwind' or 'rusanov'
 mat.dg.params.rho_diff_scale = 1;
 mat.dg.params.rho_drift_scale = 1e9;
 

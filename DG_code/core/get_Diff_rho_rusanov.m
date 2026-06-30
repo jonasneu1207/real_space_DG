@@ -87,59 +87,12 @@ switch lower(fluxType)
     case {'matrix-upwind', 'upwind', 'characteristic-upwind'}
         A = p.Q_diff*(kron(H1, Achi) + kron(H2, Aabs));
         rhs = kron(Q1, Aplus*rhoL) + kron(Q2, -Aminus*rhoR);
-
     case {'central', 'central-local', 'local-central'}
         AcentralRho = localCentralRelativeOperatorRho(p, size(Phi, 1));
         [AplusBoundary, AminusBoundary] = splitByCharacteristicSign(AcentralRho);
         AabsBoundary = AplusBoundary - AminusBoundary;
         A = p.Q_diff*(kron(H1, AcentralRho) + kron(H2Boundary, AabsBoundary));
         rhs = kron(Q1, AplusBoundary*rhoL) + kron(Q2, -AminusBoundary*rhoR);
-
-    case {'rusanov', 'lax-friedrichs', 'lf', 'rusanov-local', 'local-rusanov'}
-        % Sparse local rho-basis transport operator
-        AcentralRho = localCentralRelativeOperatorRho(p, size(Phi, 1));
-        nRho = size(AcentralRho, 1);
-
-        % Rusanov / Lax-Friedrichs strength
-        if isfield(mat.dg.params, 'thetaLF')
-            thetaLF = mat.dg.params.thetaLF;
-        elseif isfield(mat.dg.params, 'rho_theta_lf')
-            thetaLF = mat.dg.params.rho_theta_lf;
-        else
-            thetaLF = 0.2;  % safe default for testing
-        end
-
-        if isfield(mat.dg.params, 'alphaLF')
-            alphaLF = mat.dg.params.alphaLF;
-        elseif isfield(mat.dg.params, 'rho_alpha_lf')
-            alphaLF = mat.dg.params.rho_alpha_lf;
-        else
-            alphaLF = max(abs(real(lambda)));
-            if alphaLF == 0
-                alphaLF = max(abs(lambda));
-            end
-        end
-
-        betaLF = thetaLF * alphaLF;
-        % Sparse scalar LF approximation:
-        % |A| ≈ alphaLF * I
-        AabsLF = betaLF * speye(nRho);
-        % Characteristic upwind only at physical chi-boundaries.
-        % This is dense in general, but only appears in boundary blocks.
-        [AplusBoundary, AminusBoundary] = splitByCharacteristicSign(AcentralRho);
-        AabsBoundary = AplusBoundary - AminusBoundary;
-        % H2 contains the absolute/upwind part for all faces.
-        % H2Boundary contains only the two physical boundary faces.
-        % Therefore H2Interior applies LF stabilization only to interior faces.
-        H2Interior = H2 - H2Boundary;
-        A = p.Q_diff*( ...
-              kron(H1, AcentralRho) ...
-            + kron(H2Interior, AabsLF) ...
-            + kron(H2Boundary, AabsBoundary) );
-
-        rhs = kron(Q1, AplusBoundary*rhoL) ...
-            + kron(Q2, -AminusBoundary*rhoR);
-
     case {'central-projected', 'projected-central'}
         AcentralRho = Achi;
         A = p.Q_diff*(kron(H1, AcentralRho) + kron(H2Boundary, Aabs));

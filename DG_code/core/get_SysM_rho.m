@@ -24,9 +24,9 @@ info.flux = fluxInfo;
 info.drift = driftInfo;
 info.scale.diff = diffScale;
 info.scale.drift = driftScale;
-info.nnzDiffAndFlux = nnz(A_diff);
-info.nnzDrift = nnz(G_glob);
-info.normestDiffAndFlux = normest(A_diff);
-info.normestDrift = normest(G_glob);
-info.normestDriftToDiff = info.normestDrift/max(info.normestDiffAndFlux, eps);
+% info.nnzDiffAndFlux = nnz(A_diff);
+% info.nnzDrift = nnz(G_glob);
+% info.normestDiffAndFlux = normest(A_diff);
+% info.normestDrift = normest(G_glob);
+% info.normestDriftToDiff = info.normestDrift/max(info.normestDiffAndFlux, eps);
 end
