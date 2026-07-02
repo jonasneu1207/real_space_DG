@@ -11,7 +11,7 @@ function [A, rhs, fluxInfo] = get_Diff_rho(mat, p)
 % The dense projected operator Phi*D*PhiLeft is available separatly as
 % 'central-projected' for diagnostics. The domain boundaries still use the
 % characteristic inflow contribution.
-
+%%
 
 
 
@@ -106,7 +106,7 @@ switch lower(fluxType)
         elseif isfield(mat.dg.params, 'rho_theta_lf')
             thetaLF = mat.dg.params.rho_theta_lf;
         else
-            thetaLF = 0.2;  % safe default for testing
+            thetaLF = 0.1;  % safe default for testing
         end
 
         if isfield(mat.dg.params, 'alphaLF')
@@ -140,6 +140,88 @@ switch lower(fluxType)
         rhs = kron(Q1, AplusBoundary*rhoL) ...
             + kron(Q2, -AminusBoundary*rhoR);
 
+    case {'rusanov-boundary-upwind'}
+        % Sparse local rho-basis transport operator
+        AcentralRho = localCentralRelativeOperatorRho(p, size(Phi, 1));
+        nRho = size(AcentralRho, 1);
+    
+        % ------------------------------------------------------------
+        % Rusanov / Lax-Friedrichs strength
+        % ------------------------------------------------------------
+        if isfield(mat.dg.params, 'thetaLF')
+            thetaLF = mat.dg.params.thetaLF;
+        elseif isfield(mat.dg.params, 'rho_theta_lf')
+            thetaLF = mat.dg.params.rho_theta_lf;
+        else
+            thetaLF = 0.01;
+        end
+    
+        if isfield(mat.dg.params, 'alphaLF')
+            alphaLF = mat.dg.params.alphaLF;
+        elseif isfield(mat.dg.params, 'rho_alpha_lf')
+            alphaLF = mat.dg.params.rho_alpha_lf;
+        else
+            alphaLF = max(abs(real(lambda)));
+            if alphaLF == 0
+                alphaLF = max(abs(lambda));
+            end
+        end
+    
+        betaLF = thetaLF * alphaLF;
+    
+        % Sparse scalar LF approximation:
+        % |A| ≈ betaLF * I
+        AabsLF = betaLF * speye(nRho);
+    
+        % ------------------------------------------------------------
+        % Characteristic upwind matrix for the boundary layer
+        % ------------------------------------------------------------
+        [AplusBoundary, AminusBoundary] = splitByCharacteristicSign(AcentralRho);
+        AabsBoundary = AplusBoundary - AminusBoundary;
+    
+        % Optional: store as sparse. It may still be numerically dense,
+        % but only in the selected boundary-layer blocks.
+        AabsBoundary = sparse(AabsBoundary);
+        AplusBoundary = sparse(AplusBoundary);
+        AminusBoundary = sparse(AminusBoundary);
+    
+        % ------------------------------------------------------------
+        % Number of chi-cells on each side where characteristic upwind
+        % should be used.
+        %
+        % nUpwindLayer = 0: only physical boundary faces, as before
+        % nUpwindLayer = 2: first/last two chi-cell equations use
+        %                   characteristic upwind in the absolute flux part
+        % ------------------------------------------------------------
+        if isfield(mat.dg.params, 'rho_upwind_layers')
+            nUpwindLayer = mat.dg.params.rho_upwind_layers;
+        elseif isfield(mat.dg.params, 'upwindBoundaryLayers')
+            nUpwindLayer = mat.dg.params.upwindBoundaryLayers;
+        else
+            nUpwindLayer = 0;
+        end
+    
+        if nUpwindLayer <= 0
+            % Previous behavior: characteristic upwind only on physical
+            % left/right boundary faces.
+            H2Upwind = H2Boundary;
+        else
+            % New behavior: characteristic upwind in the first/last
+            % nUpwindLayer chi-cell equations.
+            H2Upwind = boundaryLayerRows(H2, nUpwindLayer);
+        end
+    
+        % Remaining interior part gets sparse Rusanov/LF stabilization
+        H2Rusanov = H2 - H2Upwind;
+    
+        A = p.Q_diff*( ...
+              kron(H1, AcentralRho) ...
+            + kron(H2Rusanov, AabsLF) ...
+            + kron(H2Upwind, AabsBoundary) );
+    
+        % RHS still only comes from physical inflow boundaries
+        rhs = kron(Q1, AplusBoundary*rhoL) ...
+            + kron(Q2, -AminusBoundary*rhoR);
     case {'central-projected', 'projected-central'}
         AcentralRho = Achi;
         A = p.Q_diff*(kron(H1, AcentralRho) + kron(H2Boundary, Aabs));
@@ -173,6 +255,9 @@ fluxInfo.rhoR = rhoR;
 end
 %% 
 
+
+
+%% Helper Functions
 function H2Boundary = boundaryUpwindChiMatrix(p, detJx, K2L, K2R)
 alphaL = zeros(p.N_chi, 1);
 alphaR = zeros(p.N_chi, 1);
@@ -223,4 +308,32 @@ elseif isfield(p, 'Dy') && isequal(size(p.Dy), [nRho, nRho])
 else
     error('No sparse rho-basis central xi-operator available for size %d.', nRho);
 end
+end
+
+function Hlayer = boundaryLayerRows(H, nLayer)
+%BOUNDARYLAYERROWS Select first/last nLayer chi-cell equation rows.
+%
+% This creates a sparse matrix with the same entries as H, but only
+% in the first and last nLayer block rows in chi. It is used to apply
+% characteristic upwind only near the physical boundaries, while the
+% interior keeps the sparse Rusanov/LF stabilization.
+
+N = size(H, 1);
+
+nLayer = max(0, round(nLayer));
+nLayer = min(nLayer, floor(N/2));
+
+if nLayer == 0
+    Hlayer = spalloc(N, N, 0);
+    return;
+end
+
+rowMask = false(N, 1);
+rowMask(1:nLayer) = true;
+rowMask(N-nLayer+1:N) = true;
+
+R = spdiags(double(rowMask), 0, N, N);
+
+Hlayer = R * H;
+Hlayer = sparse(Hlayer);
 end

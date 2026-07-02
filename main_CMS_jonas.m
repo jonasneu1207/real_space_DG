@@ -117,7 +117,7 @@ mat.W_ODD = 0;
 % poisson options
 
 mat.poisson.opt.iter_err =  1.0E-3;
-mat.poisson.opt.iter_max = 50;
+mat.poisson.opt.iter_max = 25;
 mat.poisson.opt.alpha = 1;
 mat.poisson.opt.solve = 'newton-rhapson';% 'newton-rhapson'; 'direct';
 
@@ -148,8 +148,8 @@ end
 
 
 mat.dg.params.permute_shell = true;
-mat.dg.params.rho = true;                          % false: phase/eigen basis, true: relative-coordinate rho basis
-mat.dg.params.rho_flux = 'rusanov';                % rho solver: 'central' or legacy 'matrix-upwind' or 'rusanov'
+mat.dg.params.rho = false;                                   % false: phase/eigen basis, true: relative-coordinate rho basis (real space)
+mat.dg.params.rho_flux = 'rusanov';         % rho solver: 'central', legacy 'matrix-upwind', 'rusanov' or 'rusanov-boundary-upwind'
 mat.dg.params.rho_diff_scale = 1;
 mat.dg.params.rho_drift_scale = 1e9;
 
@@ -164,7 +164,12 @@ else
     mat.dg.params.st_init    = false;
 end
 
-mat.dg.params.N_xi           = 200;   %400;   %Choose even number for DG!
+if mat.dg.params.rho
+    mat.dg.params.N_xi           = 160;   %160 for real space based approach gives best results
+else
+    mat.dg.params.N_xi           = 400;   %400;   %Choose even number for DG!
+end
+
 if (strcmpi(mat.dg.params.Xi_solver,'DG')==true)
     mat.dg.params.N_xi       = 80;                %133 for 'EXP'
 end
