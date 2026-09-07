@@ -121,10 +121,18 @@ switch solver
             Temp = mat;
             Vg = mat.Vg(1);    % set pre-switching gate voltage
 
-            INIT = get_init_DG_2D_trans_flatband(mat, Vg);
+            if isfield(mat.dg.params, 'full2D') && mat.dg.params.full2D
+                INIT = get_init_DG_full2D_trans_flatband(mat, Vg);
+            else
+                INIT = get_init_DG_2D_trans_flatband(mat, Vg);
+            end
             
             mat = Temp;
-            results = solve_transport_DG_2D_transient_flatband(mat, INIT);
+            if isfield(mat.dg.params, 'full2D') && mat.dg.params.full2D
+                results = solve_transport_DG_full2D_transient_flatband(mat, INIT);
+            else
+                results = solve_transport_DG_2D_transient_flatband(mat, INIT);
+            end
 
         elseif (strcmpi(mat.dg.params.transient_mode,'self-consistent')==true)
             Temp = mat.Vg;
@@ -141,7 +149,9 @@ switch solver
             
             mat.Vg = Temp;
 
-            if isfield(mat.dg.params, 'rho') && mat.dg.params.rho
+            if isfield(mat.dg.params, 'full2D') && mat.dg.params.full2D
+                results = solve_transport_DG_full2D_transient_SC_new(mat, INIT);
+            elseif isfield(mat.dg.params, 'rho') && mat.dg.params.rho
                 results = solve_transport_DG_2D_transient_SC_new_rho(mat, INIT);
             else
                 results = solve_transport_DG_2D_transient_SC_new(mat, INIT);

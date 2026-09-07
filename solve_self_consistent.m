@@ -393,12 +393,22 @@ for IG = 1 : length(mat.Vg)
                 case 'DG'
                    
                     %% DG Method for solving in transport direction
+                    if ~isfield(mat.dg.params, 'full2D')
+                        mat.dg.params.full2D = false;
+                    end
                     if ~isfield(mat.dg.params, 'rho')
                         mat.dg.params.rho = false;
                     end
 
                     tic
-                    if mat.dg.params.rho
+                    if mat.dg.params.full2D
+                        DG = solve_transport_DG_full2D(mat, mat.V, Ef0_L-mat.Vs, Ef0_R-mat.Vd(ID));
+                        error('DG:Full2D:BoundaryOnly', ...
+                            ['Full 2D DG/FV currently assembles boundary/CAP scaffolds only. ', ...
+                             'The 4D system matrix and n/j observables are not implemented yet. ', ...
+                             'Current Full-2D status is "%s". Call solve_transport_DG_full2D ', ...
+                             'directly to inspect DG.boundary.'], DG.status);
+                    elseif mat.dg.params.rho
                         DG = solve_transport_DG_2D_rho(mat, EM, VM, Ef0_L-mat.Vs, Ef0_R-mat.Vd(ID));
                     else
                         DG = solve_transport_DG_2D(mat, EM, VM, Ef0_L-mat.Vs, Ef0_R-mat.Vd(ID));
