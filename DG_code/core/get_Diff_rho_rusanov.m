@@ -1,4 +1,4 @@
-function [A, rhs, fluxInfo] = get_Diff_rho(mat, p)
+function [A, rhs, fluxInfo] = get_Diff_rho_rusanov(mat, p)
 %GET_DIFF_RHO DG transport operator in chi with rho as global unknown.
 %
 % The old solver stores the global unknown in the diagonal phase/eigen basis.

@@ -121,6 +121,8 @@ mat.poisson.opt.iter_max = 25;
 mat.poisson.opt.alpha = 1;
 mat.poisson.opt.solve = 'newton-rhapson';% 'newton-rhapson'; 'direct';
 
+%% Ab hier alles so lassen
+
 %% Solver specific parameters
 
 mat.wigner.params.Nk       = 100;   %200
@@ -148,7 +150,7 @@ end
 
 
 mat.dg.params.permute_shell = true;
-mat.dg.params.rho = false;                                   % false: phase/eigen basis, true: relative-coordinate rho basis (real space)
+mat.dg.params.rho = true;                                   % false: phase/eigen basis, true: relative-coordinate rho basis (real space)
 mat.dg.params.full2D = false;                               % true: full 2D Wigner transport with DG in X/Y and FV in two relative coordinates
 mat.dg.params.rho_flux = 'rusanov';         % rho solver: 'central', legacy 'matrix-upwind', 'rusanov' or 'rusanov-boundary-upwind'
 mat.dg.params.rho_diff_scale = 1;
