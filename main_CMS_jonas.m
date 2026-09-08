@@ -151,8 +151,9 @@ end
 
 mat.dg.params.permute_shell = true;
 mat.dg.params.rho = true;                                   % false: phase/eigen basis, true: relative-coordinate rho basis (real space)
-mat.dg.params.full2D = false;                               % true: full 2D Wigner transport with DG in X/Y and FV in two relative coordinates
-mat.dg.params.rho_flux = 'rusanov';         % rho solver: 'central', legacy 'matrix-upwind', 'rusanov' or 'rusanov-boundary-upwind'
+mat.dg.params.full2D = true;                                % true: full 2D Wigner transport with DG in X/Y and FV in two relative coordinates
+mat.dg.params.full2D_preconditioner = 'jacobi';             % Preconditioner for BICGSTAB or GMRES when trying to solve huge systems via matrix-free operators
+mat.dg.params.rho_flux = 'rusanov';                         % rho solver: 'central', legacy 'matrix-upwind', 'rusanov' or 'rusanov-boundary-upwind'
 mat.dg.params.rho_diff_scale = 1;
 mat.dg.params.rho_drift_scale = 1e9;
 
@@ -182,9 +183,9 @@ mat.dg.params.Ly             = 160e-9;
 mat.dg.params.N_K_X = mat.dg.params.N_K_chi;                % full2D: local DG nodes in X on rectangular elements
 mat.dg.params.N_K_Y = mat.dg.params.N_K_chi;                % full2D: local DG nodes in Y on rectangular elements
 mat.dg.params.N_rho_x = mat.dg.params.N_xi;                 % full2D: FV cells in rho_x
-mat.dg.params.N_rho_y = mat.dg.params.N_xi;                 % full2D: FV cells in rho_y
+mat.dg.params.N_rho_y = mat.dg.params.N_xi/10;                 % full2D: FV cells in rho_y
 mat.dg.params.L_rho_x = mat.dg.params.Ly;                   % full2D: rho_x interval length
-mat.dg.params.L_rho_y = mat.dg.params.Ly;                   % full2D: rho_y interval length
+mat.dg.params.L_rho_y = mat.dg.params.Ly/10;                   % full2D: rho_y interval length
 
 mat.dg.params.N              = 80;   % Number of elements in k-direction
 
