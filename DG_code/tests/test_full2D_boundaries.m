@@ -165,6 +165,8 @@ mat = makeSmallMat(3, 3, 4, 3);
 p = struct;
 p.domain.normals.XLeft = [-1, 0];
 p.domain.normals.XRight = [1, 0];
+p.domain.normals.YBottom = [0, -1];
+p.domain.normals.YTop = [0, 1];
 p.domain.normalConvention = ...
     'Normals point out of the physical X-Y domain; negative eigenvalues of A_n are inflow.';
 p.index.order = {'X-DG-DOF', 'Y-DG-DOF', 'rho_x', 'rho_y'};
@@ -178,6 +180,7 @@ p.relative.Ax = p.relative.Ax1D;
 p.relative.Ay = sparse(4, 4);
 p.relative.identity = speye(4);
 p.dg.Y.nDof = 3;
+p.dg.Y.nodes = (1:3).';
 p.dg.faces.global.left.centerDofs = (1:3).';
 p.dg.faces.global.right.centerDofs = (1:3).';
 end

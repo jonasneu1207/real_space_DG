@@ -11,15 +11,25 @@ end
 
 sourceFlux = get_NormalFlux_full2D(p, p.domain.normals.XLeft);
 drainFlux = get_NormalFlux_full2D(p, p.domain.normals.XRight);
+reflection = get_SpecularReflection_full2D(p);
+yFaceDofs = p.dg.Y.nodes(:);
 
 [sourceRho, sourceInfo] = getBoundaryRhoData(mat, p, 'source', p.dg.Y.nDof, EfL, Vxy);
 [drainRho, drainInfo] = getBoundaryRhoData(mat, p, 'drain', p.dg.Y.nDof, EfR, Vxy);
+[sourceMask, sourceMaskInfo] = get_ContactMask_full2D(mat, p, 'source', yFaceDofs);
+[drainMask, drainMaskInfo] = get_ContactMask_full2D(mat, p, 'drain', yFaceDofs);
+sourceInfo.contactMask = sourceMaskInfo;
+drainInfo.contactMask = drainMaskInfo;
+sourceRho = applyContactMask(sourceRho, sourceMask);
+drainRho = applyContactMask(drainRho, drainMask);
 
 inflow = struct;
 inflow.source = makeInflowSide('X-left', 'Source', p.domain.normals.XLeft, ...
-    sourceFlux, sourceRho, p.dg.faces.global.left.centerDofs, EfL, sourceInfo);
+    sourceFlux, sourceRho, p.dg.faces.global.left.centerDofs, EfL, ...
+    sourceInfo, sourceMask, reflection.R_x);
 inflow.drain = makeInflowSide('X-right', 'Drain', p.domain.normals.XRight, ...
-    drainFlux, drainRho, p.dg.faces.global.right.centerDofs, EfR, drainInfo);
+    drainFlux, drainRho, p.dg.faces.global.right.centerDofs, EfR, ...
+    drainInfo, drainMask, reflection.R_x);
 
 info = struct;
 info.source = sourceInfo;
@@ -27,7 +37,8 @@ info.drain = drainInfo;
 info.signConvention = sourceFlux.signConvention;
 end
 
-function side = makeInflowSide(face, reservoir, normal, normalFlux, rhoBoundary, centerDofs, Ef, dataInfo)
+function side = makeInflowSide(face, reservoir, normal, normalFlux, ...
+        rhoBoundary, centerDofs, Ef, dataInfo, contactMask, closedGhostOperator)
 side = struct;
 side.type = 'characteristic-inflow';
 side.face = face;
@@ -38,6 +49,14 @@ side.normalFlux = normalFlux;
 side.rhoBoundary = rhoBoundary;
 side.centerDofs = centerDofs(:);
 side.dataInfo = dataInfo;
+side.contactMask = logical(contactMask(:));
+side.closedFaceDofs = find(~side.contactMask);
+side.nContactFaceDof = nnz(side.contactMask);
+side.nClosedFaceDof = nnz(~side.contactMask);
+side.nonContactType = 'specular-reflection';
+side.nonContactGhostOperator = closedGhostOperator;
+side.nonContactNote = ...
+    'Masked X-face DOFs do not receive reservoir inflow; incoming data are reflected with rho_x -> -rho_x.';
 side.inflowComponents = nnz(normalFlux.inflowMask);
 side.outflowComponents = nnz(normalFlux.outflowMask);
 end
@@ -107,4 +126,14 @@ else
     end
     rhoBoundary = rhoData;
 end
+end
+
+function rhoBoundary = applyContactMask(rhoBoundary, contactMask)
+contactMask = logical(contactMask(:)).';
+if numel(contactMask) ~= size(rhoBoundary, 2)
+    error('DG:Full2D:InvalidContactMask', ...
+        'Contact mask has %d entries, expected %d face DOFs.', ...
+        numel(contactMask), size(rhoBoundary, 2));
+end
+rhoBoundary(:, ~contactMask) = 0;
 end
