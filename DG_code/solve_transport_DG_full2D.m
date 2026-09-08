@@ -138,7 +138,8 @@ end
 if isempty(rhs)
     rhs = sysInfo.assembleRhs();
 end
-
+%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 switch solverName
     case 'direct'
         if isempty(A)
@@ -189,7 +190,8 @@ switch solverName
             solverName);
 end
 end
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
 function preconditioner = buildPreconditioner(sysInfo, params, solverName, nTotal)
 %BUILDPRECONDITIONER Build a matrix-free left preconditioner for Krylov.
 %
