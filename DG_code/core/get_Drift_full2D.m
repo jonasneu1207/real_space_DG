@@ -73,6 +73,12 @@ info.scale.driftScale = data.driftScale;
 info.scale.capScale = data.capScale;
 info.scale.potentialCoefficient = data.potentialCoefficient;
 info.scale.capCoefficient = data.capCoefficient;
+info.scale.note = ['Full-2D uses full2D_drift_scale only. Legacy ', ...
+    'rho_drift_scale belongs to the 1D rho solver and is intentionally ', ...
+    'not inherited here.'];
+if hasParam(params, 'rho_drift_scale') && ~hasParam(params, 'full2D_drift_scale')
+    info.scale.legacyRhoDriftScaleIgnored = params.rho_drift_scale;
+end
 info.apply = @(u) applyDriftDiagonal(data, u);
 info.getDiagonal = @() getDriftDiagonal(data);
 info.assemble = @() assembleDriftMatrix(data);
@@ -96,8 +102,7 @@ data.potential = griddedInterpolant({gridX(:), gridY(:)}, Vfield, ...
     'linear', 'nearest');
 
 data.Qdrift = readParam(params, 'full2D_Q_drift', Qdefault);
-data.driftScale = readParam(params, 'full2D_drift_scale', ...
-    readParam(params, 'rho_drift_scale', 1));
+data.driftScale = readParam(params, 'full2D_drift_scale', 1);
 data.capScale = readParam(params, 'full2D_cap_scale', 1);
 
 % With B = DeltaV - 1i*CAP, the Wigner drift contribution is 1i*Q*B.
@@ -311,6 +316,15 @@ if isstruct(params)
             && isfield(params.full2D, name) && ~isempty(params.full2D.(name))
         value = params.full2D.(name);
     end
+end
+end
+
+function tf = hasParam(params, name)
+tf = false;
+if isstruct(params)
+    tf = (isfield(params, name) && ~isempty(params.(name))) ...
+        || (isfield(params, 'full2D') && isstruct(params.full2D) ...
+            && isfield(params.full2D, name) && ~isempty(params.full2D.(name)));
 end
 end
 

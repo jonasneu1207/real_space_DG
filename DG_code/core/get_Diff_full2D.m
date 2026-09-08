@@ -49,7 +49,7 @@ end
 
 params = getDGParams(mat);
 fluxType = lower(readParam(params, 'full2D_fluxType', ...
-    readParam(params, 'fluxType', 'rusanov')));
+    readParam(params, 'rho_flux', readParam(params, 'fluxType', 'rusanov'))));
 if any(strcmpi(fluxType, {'lf', 'lax-friedrichs', 'rusanov-local'}))
     fluxType = 'rusanov';
 end
