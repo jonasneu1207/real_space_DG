@@ -144,6 +144,8 @@ info.assembleRhs = @() assembleRhs(rhsParts, ...
     p.dg.nCenterDof, p.relative.nDof);
 info.getDiagonal = @() assembleKronDiagonal(operatorParts, ...
     p.dg.nCenterDof, p.relative.nDof);
+info.getRowAbsSum = @() assembleKronRowAbsSum(operatorParts, ...
+    p.dg.nCenterDof, p.relative.nDof);
 end
 
 function axisOps = oneDimensionalDGOperators(axis)
@@ -405,6 +407,27 @@ for ip = 1:numel(operatorParts)
     relativeDiagonal = full(diag(part.relativeMatrix));
     diagonal = diagonal ...
         + part.coefficient*kron(centerDiagonal, relativeDiagonal);
+end
+end
+
+function rowAbsSum = assembleKronRowAbsSum(operatorParts, nCenter, nRelative)
+%ASSEMBLEKRONROWABSSUM Matrix-free row magnitude estimate.
+%
+% For the global order with relative DOFs fastest, each separable part
+% coefficient*kron(C,R) contributes
+%
+%   |coefficient| * kron(sum(abs(C),2), sum(abs(R),2))
+%
+% to a row-absolute-sum scaling vector. This keeps the preconditioner
+% assembly-free and sparsity-friendly.
+
+rowAbsSum = zeros(nCenter*nRelative, 1);
+for ip = 1:numel(operatorParts)
+    part = operatorParts{ip};
+    centerRowAbs = full(sum(abs(part.centerMatrix), 2));
+    relativeRowAbs = full(sum(abs(part.relativeMatrix), 2));
+    rowAbsSum = rowAbsSum ...
+        + abs(part.coefficient)*kron(centerRowAbs, relativeRowAbs);
 end
 end
 

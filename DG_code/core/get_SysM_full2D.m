@@ -68,6 +68,7 @@ info.apply = @(u) applySystem(diffInfo, driftInfo, u);
 info.assemble = @() assembleSystem(diffInfo, driftInfo);
 info.assembleRhs = @() diffInfo.assembleRhs();
 info.getDiagonal = @() getSystemDiagonal(diffInfo, driftInfo);
+info.getRowAbsSum = @() getSystemRowAbsSum(diffInfo, driftInfo);
 end
 
 function y = applySystem(diffInfo, driftInfo, u)
@@ -83,6 +84,11 @@ end
 function diagonal = getSystemDiagonal(diffInfo, driftInfo)
 %GETSYSTEMDIAGONAL Diagonal of A_diff + G_drift for Jacobi preconditioning.
 diagonal = diffInfo.getDiagonal() + driftInfo.getDiagonal();
+end
+
+function rowAbsSum = getSystemRowAbsSum(diffInfo, driftInfo)
+%GETSYSTEMROWABSSUM Row magnitude scaling for matrix-free preconditioning.
+rowAbsSum = diffInfo.getRowAbsSum() + driftInfo.getRowAbsSum();
 end
 
 function reason = matrixReason(assembled, diffInfo, driftInfo, nTotal)

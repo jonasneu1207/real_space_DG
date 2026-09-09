@@ -86,6 +86,7 @@ if hasParam(params, 'rho_drift_scale') && ~hasParam(params, 'full2D_drift_scale'
 end
 info.apply = @(u) applyDriftDiagonal(data, u);
 info.getDiagonal = @() getDriftDiagonal(data);
+info.getRowAbsSum = @() abs(getDriftDiagonal(data));
 info.assemble = @() assembleDriftMatrix(data);
 end
 

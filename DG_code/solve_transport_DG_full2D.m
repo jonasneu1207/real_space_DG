@@ -235,13 +235,18 @@ switch mode
     case {'none', 'off', 'false', 'no'}
         preconditioner.info.reason = 'Preconditioner disabled by full2D_preconditioner.';
         return
+    case {'rowabs', 'rowsum', 'row-sum', 'row-scaling'}
+        preconditioner = enableRowAbsPreconditioner(preconditioner, ...
+            sysInfo, params, nTotal, ...
+            'Using row-absolute-sum scaling requested by full2D_preconditioner.');
+        return
     case {'auto', 'jacobi', 'diagonal'}
         useJacobi = strcmp(mode, 'jacobi') || strcmp(mode, 'diagonal') ...
             || nTotal <= maxDof;
     otherwise
         error('DG:Full2D:UnknownPreconditioner', ...
             ['Unknown full2D_preconditioner "%s". Use auto, none, ', ...
-             'jacobi or diagonal.'], mode);
+             'jacobi, diagonal or rowabs.'], mode);
 end
 
 if ~useJacobi
@@ -266,21 +271,77 @@ if ~isfield(sysInfo, 'getDiagonal') || isempty(sysInfo.getDiagonal)
 end
 
 diagonal = sysInfo.getDiagonal();
-[safeDiagonal, floorInfo] = regularizePreconditionerDiagonal(diagonal, params);
+[inverseDiagonal, floorInfo] = regularizePreconditionerDiagonal(diagonal, params);
+
+fallbackOnSmallPivots = readLogicalParam(params, ...
+    'full2D_jacobiFallbackOnSmallPivots', true);
+if floorInfo.replacedEntries > 0 && fallbackOnSmallPivots
+    preconditioner = enableRowAbsPreconditioner(preconditioner, ...
+        sysInfo, params, nTotal, ...
+        sprintf(['Requested Jacobi, but diag(A) contains %d small or zero ', ...
+        'pivots; using row-absolute-sum scaling instead.'], ...
+        floorInfo.replacedEntries));
+    preconditioner.info.jacobiDiagonal = struct( ...
+        'diagonalNnz', nnz(diagonal), ...
+        'diagonalMinAbs', min(abs(diagonal)), ...
+        'diagonalMaxAbs', max(abs(diagonal)), ...
+        'floor', floorInfo);
+    return
+end
 
 preconditioner.enabled = true;
-preconditioner.apply = @(r) r./safeDiagonal;
+preconditioner.apply = @(r) inverseDiagonal.*r;
 preconditioner.info.method = 'jacobi';
 preconditioner.info.enabled = true;
 preconditioner.info.reason = ...
-    'Using matrix-free Jacobi preconditioner M^{-1}r = r ./ diag(A).';
+    'Using matrix-free Jacobi preconditioner with identity fallback for small pivots.';
 preconditioner.info.diagonalNnz = nnz(diagonal);
 preconditioner.info.diagonalMinAbs = min(abs(diagonal));
 preconditioner.info.diagonalMaxAbs = max(abs(diagonal));
+preconditioner.info.inverseDiagonalMinAbs = min(abs(inverseDiagonal));
+preconditioner.info.inverseDiagonalMaxAbs = max(abs(inverseDiagonal));
 preconditioner.info.floor = floorInfo;
 preconditioner.info.note = ['Jacobi uses diag(A_diff)+diag(G_drift); it avoids ', ...
     'ILU-style global matrix assembly and is safe for the rho-basis ', ...
     'matrix-free path.'];
+end
+
+function preconditioner = enableRowAbsPreconditioner(preconditioner, ...
+        sysInfo, params, nTotal, reason)
+%ENABLEROWABSPRECONDITIONER Use positive row-sum scaling as M^{-1}.
+%
+% The DG/FV Full-2D operator can have zero diagonal entries, so plain Jacobi
+% may be singular or numerically harmful. Row-absolute-sum scaling is a
+% sparse/matrix-free friendly fallback:
+%
+%   M_ii approx sum_j |A_ij|,    M^{-1}r = r ./ M_ii.
+%
+% It is less aggressive than diagonal Jacobi and does not require global
+% matrix assembly.
+
+if ~isfield(sysInfo, 'getRowAbsSum') || isempty(sysInfo.getRowAbsSum)
+    preconditioner.info.reason = ...
+        'Row-absolute-sum preconditioner requested, but row sums are not available.';
+    return
+end
+
+rowAbsSum = sysInfo.getRowAbsSum();
+[rowScale, scaleInfo] = regularizeRowAbsScale(rowAbsSum, params);
+
+preconditioner.enabled = true;
+preconditioner.apply = @(r) r./rowScale;
+preconditioner.info.method = 'rowabs';
+preconditioner.info.enabled = true;
+preconditioner.info.reason = reason;
+preconditioner.info.nTotal = nTotal;
+preconditioner.info.rowAbsMin = min(rowAbsSum);
+preconditioner.info.rowAbsMax = max(rowAbsSum);
+preconditioner.info.scaleMin = min(rowScale);
+preconditioner.info.scaleMax = max(rowScale);
+preconditioner.info.floor = scaleInfo;
+preconditioner.info.note = ['Row-absolute-sum scaling approximates a ', ...
+    'diagonal magnitude preconditioner without inverting zero diagonal ', ...
+    'entries or assembling the full matrix.'];
 end
 
 function mode = preconditionerModeToString(rawMode)
@@ -301,7 +362,7 @@ else
 end
 end
 
-function [safeDiagonal, info] = regularizePreconditionerDiagonal(diagonal, params)
+function [inverseDiagonal, info] = regularizePreconditionerDiagonal(diagonal, params)
 diagonal = diagonal(:);
 maxAbs = max(abs(diagonal));
 absoluteFloor = readParam(params, 'full2D_preconditionerAbsoluteFloor', []);
@@ -310,16 +371,46 @@ if isempty(absoluteFloor)
     absoluteFloor = relativeFloor*max(maxAbs, 1);
 end
 
-safeDiagonal = diagonal;
-small = abs(safeDiagonal) < absoluteFloor;
-safeDiagonal(small) = absoluteFloor;
+% Do not replace zero pivots by a tiny floor and then divide by that value.
+% For this DG/FV operator some diagonal entries are exactly zero; inverting a
+% tiny artificial pivot amplifies those residual components and can trigger a
+% BICGSTAB breakdown. Small-pivot entries are therefore left unpreconditioned
+% by using the identity action on those components.
+small = abs(diagonal) < absoluteFloor;
+inverseDiagonal = complex(ones(size(diagonal)));
+inverseDiagonal(~small) = 1./diagonal(~small);
 
 info = struct;
 info.absoluteFloor = absoluteFloor;
 info.relativeFloor = relativeFloor;
 info.replacedEntries = nnz(small);
+info.smallPivotMode = 'identity';
 info.note = ...
-    'Small diagonal entries are floored to avoid an unstable Jacobi inverse.';
+    'Small diagonal entries are not inverted; the preconditioner uses identity action there.';
+end
+
+function [rowScale, info] = regularizeRowAbsScale(rowAbsSum, params)
+rowAbsSum = full(rowAbsSum(:));
+maxAbs = max(rowAbsSum);
+absoluteFloor = readParam(params, 'full2D_preconditionerRowAbsFloor', []);
+if isempty(absoluteFloor)
+    relativeFloor = readParam(params, 'full2D_preconditionerFloor', 1e-12);
+    absoluteFloor = relativeFloor*max(maxAbs, 1);
+else
+    relativeFloor = NaN;
+end
+
+rowScale = rowAbsSum;
+small = rowScale < absoluteFloor;
+rowScale(small) = 1;
+
+info = struct;
+info.absoluteFloor = absoluteFloor;
+info.relativeFloor = relativeFloor;
+info.replacedEntries = nnz(small);
+info.smallPivotMode = 'identity';
+info.note = ...
+    'Rows with near-zero absolute row sum are left unscaled.';
 end
 
 function value = readLogicalParam(params, name, defaultValue)
