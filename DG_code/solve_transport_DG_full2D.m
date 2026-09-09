@@ -56,6 +56,15 @@ DG.yDG = p.dg.Y.nodes(:);
 DG.rho_x = p.relative.rhoX.cells(:);
 DG.rho_y = p.relative.rhoY.cells(:);
 DG.xi = p.relative.rhoX.cells(:);
+DG.getRhoSlice2D = @(freeDims, varargin) ...
+    get_RhoSlice2D_full2D(rho, p, freeDims, varargin{:});
+DG.slice2D = DG.getRhoSlice2D;
+DG.info.slice2D = struct( ...
+    'function', 'get_RhoSlice2D_full2D', ...
+    'usage', ['[S,ax,si] = DG.getRhoSlice2D({''X'',''rho_x''}, ', ...
+        'struct(''Y'',0,''rho_y'',0));'], ...
+    'note', ['Slices are extracted from DG.rho using the global order ', ...
+        'rho(iX,iY,iRhoX,iRhoY), so DG.RHO does not have to be stored.']);
 
 if isempty(rho)
     DG.n = [];
@@ -125,7 +134,7 @@ preconditioner = buildPreconditioner(sysInfo, params, solverName, nTotal);
 solveInfo.preconditioner = preconditioner.info;
 
 if strcmp(solverName, 'direct') && isempty(A)
-    maxDirectSolveDof = readParam(params, 'full2D_maxDirectSolveDof', 50000);
+    maxDirectSolveDof = readParam(params, 'full2D_maxDirectSolveDof', 150000);
     if nTotal > maxDirectSolveDof
         solveInfo.status = 'operator-ready-direct-solve-skipped-size';
         solveInfo.reason = sprintf(['Direct solve would require assembling ', ...
@@ -359,7 +368,7 @@ end
 function solverName = chooseSolver(params, matrixFreeOnly, nTotal)
 solverName = lower(char(readParam(params, 'full2D_solver', 'auto')));
 if strcmp(solverName, 'auto')
-    maxDirectSolveDof = readParam(params, 'full2D_maxDirectSolveDof', 50000);
+    maxDirectSolveDof = readParam(params, 'full2D_maxDirectSolveDof', 150000);
     if ~matrixFreeOnly && nTotal <= maxDirectSolveDof
         solverName = 'direct';
     else

@@ -61,8 +61,13 @@ info.centerDof = p.dg.nCenterDof;
 info.relativeDof = p.relative.nDof;
 info.chunkSize = data.chunkSize;
 info.potentialGrid = potentialInfo;
+info.potentialDiscretization = 'collocated-diagonal-rho-prototype';
 info.potentialDifference = ...
     'DeltaV = V(X+rho_x/2,Y+rho_y/2) - V(X-rho_x/2,Y-rho_y/2).';
+info.potentialDiscretizationNote = ['The existing 1D rho/FV drift uses ', ...
+    'local relative-coordinate FV blocks. Full-2D currently uses a ', ...
+    'diagonal collocated prototype so the 4D operator stays cheap; this ', ...
+    'is sparse but not yet the same FV quadrature as the 1D rho solver.'];
 info.CAP = cap;
 info.CAPMatrixSize = size(cap.Crho);
 info.CAPNnz = nnz(cap.Crho);

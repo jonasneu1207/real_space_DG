@@ -13,15 +13,15 @@ switch device
         mat.type = 'DGFET-type-I';
         %n_of_modes = mat.n_of_modes;      
 
-        dx = 0.5; % transport direction
+        dx = 1.0; % transport direction
         dy = 0.5; % confinement direction
 
         n_of_valleys = 1;  % number of valleys
         deg_factor = 1;    % degenarcy factor of the valley
         
-        L_c = 10; % channel length
-        L_s = 20; % source length
-        L_d = 20; % drain length
+        L_c = 6; % channel length
+        L_s = 10; % source length
+        L_d = 10; % drain length
         
         L_x = L_c + L_s + L_d;
         

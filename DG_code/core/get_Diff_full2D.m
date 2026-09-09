@@ -75,6 +75,14 @@ operatorParts = addInteriorRusanovPart(operatorParts, 'X interior Rusanov', ...
 operatorParts = addOperatorPart(operatorParts, 'X physical boundary characteristic penalty', ...
     scaleX, centerOps.X.H2Boundary, relativeOps.X.AabsChar);
 
+% Sign convention for the following Source/Drain RHS terms:
+% get_NormalFlux_full2D describes the physical outward normal flux F_n. The
+% weak DG assembly below is written with the positive coordinate operator
+% A_X. Hence, at X-left, A_n = -A_X and the incoming normal flux
+% A_n^-*rho_source equals -A_X^+*rho_source; after moving the boundary term
+% to the RHS this appears as +A_X^+*rho_source. At X-right the RHS is
+% -A_X^-*rho_drain. This mirrors the established 1D rho solver.
+%
 % Masked Source/Drain face pieces are not reservoirs. The base boundary
 % penalty enforces incoming characteristics against rhoBoundary; on closed
 % pieces we replace this by the specular condition rho_in = R_x*rho_inside.
