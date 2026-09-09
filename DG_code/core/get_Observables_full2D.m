@@ -1,10 +1,10 @@
 function [n, jx, jy, info] = get_Observables_full2D(rho, p, mat)
 %GET_OBSERVABLES_FULL2D Density and current diagnostics for Full-2D rho data.
 %
-% The full unknown is rho(X,Y,rho_x,rho_y), vectorized with X fastest. The
-% carrier density is sampled at zero relative separation:
+% The full unknown is rho(rho_x,rho_y,X,Y), vectorized with rho_x fastest.
+% The carrier density is sampled at zero relative separation:
 %
-%   n(X,Y) = real(rho(X,Y,0,0)).
+%   n(X,Y) = real(rho(0,0,X,Y)).
 %
 % The current densities are estimated from the derivative of the density
 % matrix at zero relative separation, analogous to the existing 1D rho
@@ -22,7 +22,7 @@ if numel(rho) ~= p.index.nTotal
 end
 
 rho = rho(:);
-rhoByRelative = reshape(rho, p.dg.nCenterDof, p.relative.nDof);
+rhoByCenter = reshape(rho, p.relative.nDof, p.dg.nCenterDof);
 rho4D = reshape(rho, p.index.arraySize);
 
 [rhoXIds, rhoXWeights, rhoXMode] = zeroInterpolationWeights(p.relative.rhoX.cells);
@@ -34,7 +34,7 @@ nDG = zeros(p.dg.X.nDof, p.dg.Y.nDof);
 for ix = 1:numel(rhoXIds)
     for iy = 1:numel(rhoYIds)
         nDG = nDG + rhoXWeights(ix)*rhoYWeights(iy) ...
-            *real(rho4D(:, :, rhoXIds(ix), rhoYIds(iy)));
+            *real(squeeze(rho4D(rhoXIds(ix), rhoYIds(iy), :, :)));
     end
 end
 
@@ -42,14 +42,14 @@ derivativeX = zeros(p.dg.nCenterDof, 1);
 for iy = 1:numel(rhoYIds)
     relIds = (rhoYIds(iy)-1)*p.relative.NrhoX + (1:p.relative.NrhoX);
     derivativeX = derivativeX ...
-        + rhoYWeights(iy)*(rhoByRelative(:, relIds)*rhoXDerivativeRow(:));
+        + rhoYWeights(iy)*(rhoXDerivativeRow*rhoByCenter(relIds, :)).';
 end
 
 derivativeY = zeros(p.dg.nCenterDof, 1);
 for ix = 1:numel(rhoXIds)
     relIds = rhoXIds(ix) + (0:p.relative.NrhoY-1)*p.relative.NrhoX;
     derivativeY = derivativeY ...
-        + rhoXWeights(ix)*(rhoByRelative(:, relIds)*rhoYDerivativeRow(:));
+        + rhoXWeights(ix)*(rhoYDerivativeRow*rhoByCenter(relIds, :)).';
 end
 
 [scaleX, scaleY, currentScaleInfo] = currentScales(mat);

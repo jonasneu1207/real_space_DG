@@ -4,15 +4,15 @@ function [A, rhs, info] = get_Diff_full2D(mat, p, boundary)
 % This is the first assembled part of the full physical 2D Wigner equation.
 % The unknown is stored in the relative-coordinate basis
 %
-%   F = F(X, Y, rho_x, rho_y).
+%   F = F(rho_x, rho_y, X, Y).
 %
 % Global DOF order:
-%   F(iX, iY, iRhoX, iRhoY) is vectorized as F(:). Hence X-DG DOFs are the
-%   fastest index, followed by Y-DG DOFs, rho_x FV cells and rho_y FV cells.
-%   If C acts on the center coordinates (X,Y) and R acts on the relative
-%   coordinates (rho_x,rho_y), the lifted matrix is
+%   F(iRhoX, iRhoY, iX, iY) is vectorized as F(:). Hence rho_x FV cells are
+%   the fastest index, followed by rho_y FV cells, X-DG DOFs and Y-DG DOFs.
+%   If R acts on the relative coordinates (rho_x,rho_y) and C acts on the
+%   center coordinates (X,Y), the lifted matrix is
 %
-%       kron(R, C).
+%       kron(C, R).
 %
 % Transport model used here:
 %   A_X = -1i*d/d(rho_x),  A_Y = -1i*d/d(rho_y)
@@ -382,7 +382,7 @@ function A = assembleKronOperator(operatorParts, nCenter, nRelative)
 A = spalloc(nCenter*nRelative, nCenter*nRelative, 0);
 for ip = 1:numel(operatorParts)
     part = operatorParts{ip};
-    A = A + part.coefficient*kron(part.relativeMatrix, part.centerMatrix);
+    A = A + part.coefficient*kron(part.centerMatrix, part.relativeMatrix);
 end
 A = sparse(A);
 end
@@ -390,10 +390,10 @@ end
 function diagonal = assembleKronDiagonal(operatorParts, nCenter, nRelative)
 %ASSEMBLEKRONDIAGONAL Diagonal of the matrix-free transport operator.
 %
-% For the global ordering (center fastest, relative slowest), each separable
-% contribution coefficient*kron(R,C) has diagonal
+% For the global ordering (relative fastest, center slowest), each separable
+% contribution coefficient*kron(C,R) has diagonal
 %
-%   coefficient*kron(diag(R), diag(C)).
+%   coefficient*kron(diag(C), diag(R)).
 %
 % This is the quantity used by the Full-2D Jacobi preconditioner; no global
 % sparse matrix has to be formed.
@@ -404,7 +404,7 @@ for ip = 1:numel(operatorParts)
     centerDiagonal = full(diag(part.centerMatrix));
     relativeDiagonal = full(diag(part.relativeMatrix));
     diagonal = diagonal ...
-        + part.coefficient*kron(relativeDiagonal, centerDiagonal);
+        + part.coefficient*kron(centerDiagonal, relativeDiagonal);
 end
 end
 
@@ -412,7 +412,7 @@ function rhs = assembleRhs(rhsParts, nCenter, nRelative)
 rhs = sparse(nCenter*nRelative, 1);
 for ip = 1:numel(rhsParts)
     part = rhsParts{ip};
-    rhs = rhs + part.coefficient*kron(part.relativeVector, part.centerVector);
+    rhs = rhs + part.coefficient*kron(part.centerVector, part.relativeVector);
 end
 rhs = full(rhs);
 end
@@ -422,11 +422,11 @@ if numel(u) ~= nCenter*nRelative
     error('DG:Full2D:InvalidOperatorInput', ...
         'Input has %d entries, expected %d.', numel(u), nCenter*nRelative);
 end
-U = reshape(u, nCenter, nRelative);
-Y = zeros(nCenter, nRelative);
+U = reshape(u, nRelative, nCenter);
+Y = zeros(nRelative, nCenter);
 for ip = 1:numel(operatorParts)
     part = operatorParts{ip};
-    Y = Y + part.coefficient*(part.centerMatrix*U*part.relativeMatrix.');
+    Y = Y + part.coefficient*(part.relativeMatrix*U*part.centerMatrix.');
 end
 y = Y(:);
 end

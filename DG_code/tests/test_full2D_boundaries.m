@@ -16,7 +16,9 @@ function testTensorProductDimensions(testCase)
 mat = makeSmallMat(9, 7, 9, 7);
 p = initParams_full2D(mat, mat.V, 0.1, 0.0);
 
-verifyEqual(testCase, p.index.order, {'X-DG-DOF', 'Y-DG-DOF', 'rho_x', 'rho_y'});
+verifyEqual(testCase, p.index.order, {'rho_x', 'rho_y', 'X-DG-DOF', 'Y-DG-DOF'});
+verifyEqual(testCase, p.index.arraySize, ...
+    [p.relative.NrhoX, p.relative.NrhoY, p.dg.X.nDof, p.dg.Y.nDof]);
 verifyEqual(testCase, p.dg.X.nElements, 4);
 verifyEqual(testCase, p.dg.Y.nElements, 3);
 verifySize(testCase, p.dg.MXY, [p.dg.nLocalDof, p.dg.nLocalDof]);
@@ -169,7 +171,7 @@ p.domain.normals.YBottom = [0, -1];
 p.domain.normals.YTop = [0, 1];
 p.domain.normalConvention = ...
     'Normals point out of the physical X-Y domain; negative eigenvalues of A_n are inflow.';
-p.index.order = {'X-DG-DOF', 'Y-DG-DOF', 'rho_x', 'rho_y'};
+p.index.order = {'rho_x', 'rho_y', 'X-DG-DOF', 'Y-DG-DOF'};
 p.relative.NrhoX = 4;
 p.relative.NrhoY = 1;
 p.relative.size = [4, 1];

@@ -2,10 +2,10 @@ function p = initParams_full2D(mat, Vxy, EfL, EfR)
 %INITPARAMS_FULL2D Parameters for the full physical 2D Wigner-DG scaffold.
 %
 % Global DOF order:
-%   F(iX, iY, iRhoX, iRhoY) is vectorized as F(:). Thus X-DG DOFs are the
-%   fastest index, followed by Y-DG DOFs, rho_x FV cells, and rho_y FV cells.
+%   F(iRhoX, iRhoY, iX, iY) is vectorized as F(:). Thus rho_x FV cells are
+%   the fastest index, followed by rho_y FV cells, X-DG DOFs and Y-DG DOFs.
 %   A separable operator O_X is lifted as
-%   kron(I_rho_y, kron(I_rho_x, kron(I_Y, O_X))).
+%   kron(I_Y, kron(O_X, kron(I_rho_y, I_rho_x))).
 %
 % Center coordinates X and Y use rectangular DG elements with tensor-product
 % basis phi_ij(X,Y) = phi_i^X(X)*phi_j^Y(Y). Relative coordinates rho_x and
@@ -83,10 +83,10 @@ p.relative.Ax = kron(Iy, p.relative.Ax1D);
 p.relative.Ay = kron(p.relative.Ay1D, Ix);
 p.relative.identity = speye(p.relative.nDof);
 
-p.index.order = {'X-DG-DOF', 'Y-DG-DOF', 'rho_x', 'rho_y'};
-p.index.arraySize = [p.dg.centerSize, p.relative.size];
+p.index.order = {'rho_x', 'rho_y', 'X-DG-DOF', 'Y-DG-DOF'};
+p.index.arraySize = [p.relative.size, p.dg.centerSize];
 p.index.nTotal = prod(p.index.arraySize);
-p.index.lift = @(OX, OY, ORX, ORY) kron(ORY, kron(ORX, kron(OY, OX)));
+p.index.lift = @(OX, OY, ORX, ORY) kron(OY, kron(OX, kron(ORY, ORX)));
 end
 
 function value = readFull2DParam(params, name, defaultValue)

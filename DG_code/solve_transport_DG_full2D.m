@@ -6,8 +6,8 @@ function DG = solve_transport_DG_full2D(mat, Vxy, EfL, EfR)
 %   rho_x, rho_y relative coordinates, finite volumes
 %
 % Global unknown:
-%   F(iX, iY, iRhoX, iRhoY), vectorized as F(:). X is fastest, then Y,
-%   rho_x and rho_y.
+%   F(iRhoX, iRhoY, iX, iY), vectorized as F(:). rho_x is fastest, then
+%   rho_y, X and Y.
 %
 % This routine now builds the Full-2D stationary operator in rho basis:
 %   - sparse/Kronecker DG transport and boundary fluxes,
@@ -64,7 +64,7 @@ DG.info.slice2D = struct( ...
     'usage', ['[S,ax,si] = DG.getRhoSlice2D({''X'',''rho_x''}, ', ...
         'struct(''Y'',0,''rho_y'',0));'], ...
     'note', ['Slices are extracted from DG.rho using the global order ', ...
-        'rho(iX,iY,iRhoX,iRhoY), so DG.RHO does not have to be stored.']);
+        'rho(iRhoX,iRhoY,iX,iY), so DG.RHO does not have to be stored.']);
 
 if isempty(rho)
     DG.n = [];
@@ -91,7 +91,7 @@ if shouldStoreRHOArray(mat, p.index.nTotal)
 else
     DG.RHO = [];
     DG.info.solve.RHONote = ...
-        'RHO array was not duplicated; use DG.rho and reshape with DG.p.index.arraySize if needed.';
+        'RHO array was not duplicated; use DG.rho and reshape with DG.p.index.arraySize, ordered as rho_x,rho_y,X,Y, if needed.';
 end
 end
 

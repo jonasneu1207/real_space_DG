@@ -2,8 +2,8 @@ function [G, info] = get_Drift_full2D(mat, p, Vxy)
 %GET_DRIFT_FULL2D Local potential and CAP operator for Full-2D Wigner-DG.
 %
 % Unknown and vector order:
-%   F(iX, iY, iRhoX, iRhoY) is stored as F(:). X-DG is the fastest index,
-%   followed by Y-DG, rho_x FV cells and rho_y FV cells.
+%   F(iRhoX, iRhoY, iX, iY) is stored as F(:). rho_x FV is the fastest
+%   index, followed by rho_y FV, X-DG and Y-DG.
 %
 % In the rho-basis prototype used here, the nonlocal Wigner potential is
 % represented as a collocated relative-coordinate potential difference
@@ -172,11 +172,12 @@ end
 function diagonal = driftDiagonalChunk(data, ids)
 %DRIFTDIAGONALCHUNK Evaluate the local diagonal entries for linear DOFs.
 %
-% The linear index is split into a center index and a relative index using
-% the global ordering (center fastest, relative slowest).
+% The linear index is split using the global Full-2D order
+% (rho_x,rho_y,X,Y). Hence the relative index is fastest and the center
+% index is slowest.
 
-centerIds = mod(ids-1, data.nCenter) + 1;
-relativeIds = floor((ids-1)/data.nCenter) + 1;
+relativeIds = mod(ids-1, data.nRelative) + 1;
+centerIds = floor((ids-1)/data.nRelative) + 1;
 
 rhoX = data.relativeX(relativeIds);
 rhoY = data.relativeY(relativeIds);

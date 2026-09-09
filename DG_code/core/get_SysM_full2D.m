@@ -3,13 +3,13 @@ function [A, rhs, info] = get_SysM_full2D(mat, p, Vxy, EfL, EfR)
 %
 % The global unknown is
 %
-%   F = F(X, Y, rho_x, rho_y)
+%   F = F(rho_x, rho_y, X, Y)
 %
 % with vector order
 %
-%   F(iX, iY, iRhoX, iRhoY) -> F(:),
+%   F(iRhoX, iRhoY, iX, iY) -> F(:),
 %
-% so X-DG is the fastest index, then Y-DG, rho_x and rho_y.
+% so rho_x is the fastest index, then rho_y, X-DG and Y-DG.
 %
 % Implemented system split:
 %   Diff/transport: rectangular DG in X/Y with FV rho-operators and
