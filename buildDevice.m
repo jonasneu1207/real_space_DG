@@ -13,7 +13,7 @@ switch device
         mat.type = 'DGFET-type-I';
         %n_of_modes = mat.n_of_modes;      
 
-        dx = 1.0; % transport direction
+        dx = 0.5; % transport direction
         dy = 0.5; % confinement direction
 
         n_of_valleys = 1;  % number of valleys
