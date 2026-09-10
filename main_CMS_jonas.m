@@ -158,6 +158,7 @@ mat.dg.params.full2D = true;                                % true: full 2D Wign
 mat.dg.params.full2D_maxDirectSolveDof = 160000;
 mat.dg.params.full2D_maxAssembledDof = 160000;
 mat.dg.params.full2D_preconditioner = 'jacobi';             % Preconditioner for BICGSTAB or GMRES when trying to solve huge systems via matrix-free operators
+mat.dg.params.full2D_reservoirModel = 'contact-modes';
 
 mat.dg.params.rho_flux = 'rusanov';                         % rho solver: 'central', legacy 'matrix-upwind', 'rusanov' or 'rusanov-boundary-upwind'
 mat.dg.params.rho_diff_scale = 1;

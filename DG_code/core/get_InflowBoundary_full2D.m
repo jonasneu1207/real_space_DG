@@ -93,13 +93,48 @@ elseif isfield(params, phaseName) && ~isempty(params.(phaseName))
     dataInfo.origin = phaseName;
     dataInfo.transform = transformInfo;
 else
-    [rhoRel, reservoirInfo] = get_DefaultReservoirRho_full2D(mat, p, sideName, Ef, Vxy);
+    reservoirModel = normalizeReservoirModel(readParam(params, ...
+        'full2D_reservoirModel', 'material-default'));
+    switch reservoirModel
+        case 'material-default'
+            [rhoRel, reservoirInfo] = get_DefaultReservoirRho_full2D( ...
+                mat, p, sideName, Ef, Vxy);
+        case 'contact-modes'
+            [rhoRel, reservoirInfo] = get_ContactModeReservoirRho_full2D( ...
+                mat, p, sideName, Ef, Vxy);
+        case 'zero'
+            rhoRel = zeros(p.relative.nDof, p.dg.Y.nDof);
+            reservoirInfo = struct;
+            reservoirInfo.origin = 'zero-reservoir';
+            reservoirInfo.side = sideName;
+            reservoirInfo.model = reservoirModel;
+            reservoirInfo.note = ...
+                'Reservoir data disabled by full2D_reservoirModel.';
+        otherwise
+            error('DG:Full2D:UnknownReservoirModel', ...
+                ['Unknown full2D_reservoirModel "%s". Use ', ...
+                 '"material-default", "contact-modes" or "zero".'], ...
+                reservoirModel);
+    end
     dataInfo.origin = reservoirInfo.origin;
+    dataInfo.reservoirModel = reservoirModel;
     dataInfo.defaultReservoir = reservoirInfo;
 end
 
 rhoBoundary = expandFaceData(rhoRel, p.relative.nDof, nFaceDof);
 dataInfo.size = size(rhoBoundary);
+end
+
+function model = normalizeReservoirModel(rawModel)
+model = lower(strrep(strrep(char(rawModel), '_', '-'), ' ', '-'));
+switch model
+    case {'material', 'material-default', 'bulk', 'bulk-local', 'local-bulk'}
+        model = 'material-default';
+    case {'contact-mode', 'contact-modes', 'modes', 'transverse-modes'}
+        model = 'contact-modes';
+    case {'zero', 'none', 'off', 'false'}
+        model = 'zero';
+end
 end
 
 function data = readOptionalVector(params, name)
@@ -136,4 +171,16 @@ if numel(contactMask) ~= size(rhoBoundary, 2)
         numel(contactMask), size(rhoBoundary, 2));
 end
 rhoBoundary(:, ~contactMask) = 0;
+end
+
+function value = readParam(params, name, defaultValue)
+value = defaultValue;
+if isstruct(params)
+    if isfield(params, name) && ~isempty(params.(name))
+        value = params.(name);
+    elseif isfield(params, 'full2D') && isstruct(params.full2D) ...
+            && isfield(params.full2D, name) && ~isempty(params.full2D.(name))
+        value = params.full2D.(name);
+    end
+end
 end
