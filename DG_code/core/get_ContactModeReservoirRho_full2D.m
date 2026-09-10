@@ -38,12 +38,14 @@ degFactor = readDegeneracy(mat);
 
 [contact, contactInfo] = contactProblem(mat, p, sideName, Vxy);
 nModes = contactModeCount(mat, params, contact.nGrid);
-[modeEnergy, modeVector] = solveContactModes(contact.H, nModes);
+[modeEnergy, modeVector, modeNormalization] = solveContactModes( ...
+    contact.H, nModes, contact.gridY);
 
 modeMassX = modeAveragedMass(modeVector, contact.mXRelative, ...
-    readField(mat, 'me_x_ch', 0.041), constants);
+    readField(mat, 'me_x_ch', 0.041), constants, contact.gridY);
 modeMassZ = modeAveragedMass(modeVector, contact.mZRelative, ...
-    readField(mat, 'me_z_ch', readField(mat, 'me_x_ch', 0.041)), constants);
+    readField(mat, 'me_z_ch', readField(mat, 'me_x_ch', 0.041)), ...
+    constants, contact.gridY);
 
 nKx = readParam(params, 'full2D_contactMode_Nkx', ...
     readParam(params, 'full2D_reservoir_Nkx', p.relative.NrhoX));
@@ -83,6 +85,7 @@ info.modeCount = nModes;
 info.modeEnergy = modeEnergy(:);
 info.modeMassXKg = modeMassX(:);
 info.modeMassZKg = modeMassZ(:);
+info.modeNormalization = modeNormalization;
 info.transverseModeNorm = transverseNormByMode;
 info.contact = contactInfo;
 info.kxRange = [min(kx), max(kx)];
@@ -164,7 +167,7 @@ vv = [leftValue; centerValue; rightValue; ...
 H = sparse(ii, jj, vv, nY, nY);
 end
 
-function [modeEnergy, modeVector] = solveContactModes(H, nModes)
+function [modeEnergy, modeVector, normInfo] = solveContactModes(H, nModes, gridY)
 nGrid = size(H, 1);
 if nModes >= nGrid
     [V, E] = eig(full(H));
@@ -181,15 +184,31 @@ modeEnergy = real(diag(E));
 modeVector = real(V(:, ids(1:nModes)));
 modeEnergy = modeEnergy(1:nModes);
 
+weights = quadratureWeights(gridY);
+rawIntegral = zeros(nModes, 1);
+normalizedIntegral = zeros(nModes, 1);
 for im = 1:nModes
-    modeNorm = sqrt(sum(abs(modeVector(:, im)).^2));
+    % EIGS returns vectors with Euclidean norm one. For a density matrix in
+    % physical Y coordinates we need continuum normalization,
+    % int |phi_n(y)|^2 dy = 1. Without this dy-weighted normalization the
+    % contact reservoir scales with the transverse grid spacing.
+    rawIntegral(im) = sum(weights.*abs(modeVector(:, im)).^2);
+    modeNorm = sqrt(rawIntegral(im));
     if modeNorm > 0
         modeVector(:, im) = modeVector(:, im)/modeNorm;
     end
     if modeVector(end, im) < 0
         modeVector(:, im) = -modeVector(:, im);
     end
+    normalizedIntegral(im) = sum(weights.*abs(modeVector(:, im)).^2);
 end
+
+normInfo = struct;
+normInfo.method = 'trapezoidal-y-integral';
+normInfo.rawIntegral = rawIntegral;
+normInfo.normalizedIntegral = normalizedIntegral;
+normInfo.note = ...
+    'Contact modes are normalized with int |phi(y)|^2 dy = 1 to avoid dy-dependent reservoir amplitudes.';
 end
 
 function rhoXMode = transformLongitudinalMode(cosX, kx, dkx, modeEnergy, ...
@@ -225,12 +244,27 @@ for iy = 1:numel(yFace)
 end
 end
 
-function massKg = modeAveragedMass(modeVector, massRelative, defaultRelative, constants)
+function massKg = modeAveragedMass(modeVector, massRelative, defaultRelative, constants, gridY)
 massRelative = sanitizeRelativeMass(massRelative, defaultRelative);
+weights = quadratureWeights(gridY);
 weight = abs(modeVector).^2;
-weightSum = sum(weight, 1).';
-relativeMass = (weight.'*massRelative(:))./max(weightSum, eps);
+weightSum = sum(weight.*weights, 1).';
+relativeMass = (weight.'*(weights.*massRelative(:)))./max(weightSum, eps);
 massKg = sanitizeRelativeMass(relativeMass, defaultRelative)*constants.m0;
+end
+
+function weights = quadratureWeights(gridY)
+gridY = gridY(:);
+if numel(gridY) < 2
+    weights = 1;
+    return
+end
+
+dyLeft = [0; diff(gridY)];
+dyRight = [diff(gridY); 0];
+weights = 0.5*(dyLeft + dyRight);
+weights(1) = 0.5*(gridY(2)-gridY(1));
+weights(end) = 0.5*(gridY(end)-gridY(end-1));
 end
 
 function nModes = contactModeCount(mat, params, nGrid)
