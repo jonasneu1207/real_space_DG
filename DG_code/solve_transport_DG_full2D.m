@@ -99,7 +99,7 @@ function [rho, solveInfo, A, rhs] = solveStationarySystem(A, rhs, sysInfo, mat, 
 params = getDGParams(mat);
 nTotal = p.index.nTotal;
 mode = readParam(params, 'full2D_solve', 'auto');
-maxAutoSolveDof = readParam(params, 'full2D_maxAutoSolveDof', 6e6);
+maxAutoSolveDof = readParam(params, 'full2D_maxAutoSolveDof', 1e7);
 maxMatrixFreeSolveDof = readParam(params, 'full2D_maxMatrixFreeSolveDof', 2e7);
 
 rho = [];
@@ -170,6 +170,23 @@ switch solverName
             [rho, flag, relres, iter, resvec] = bicgstab(applyA, rhs, ...
                 solveInfo.tolerance, solveInfo.maxIterations);
         end
+        if shouldRetryBlockJacobiWithRowAbs(flag, preconditioner, params)
+            firstAttempt = struct( ...
+                'method', preconditioner.info.method, ...
+                'flag', flag, ...
+                'relres', relres, ...
+                'iterations', iter);
+            preconditioner = enableRowAbsPreconditioner(preconditioner, ...
+                sysInfo, params, nTotal, ...
+                sprintf(['BICGSTAB with Block-Jacobi returned flag %d; ', ...
+                'retrying with row-absolute-sum scaling.'], flag));
+            if preconditioner.enabled
+                [rho, flag, relres, iter, resvec] = bicgstab(applyA, rhs, ...
+                    solveInfo.tolerance, solveInfo.maxIterations, ...
+                    preconditioner.apply);
+                preconditioner.info.retryFrom = firstAttempt;
+            end
+        end
         solveInfo.status = iterativeStatus('bicgstab', flag);
         solveInfo.flag = flag;
         solveInfo.relres = relres;
@@ -198,19 +215,29 @@ switch solverName
             'Unknown full2D_solver "%s". Use auto, direct, bicgstab or gmres.', ...
             solverName);
 end
+solveInfo.preconditioner = preconditioner.info;
 end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%
 function preconditioner = buildPreconditioner(sysInfo, params, solverName, nTotal)
 %BUILDPRECONDITIONER Build a matrix-free left preconditioner for Krylov.
 %
-% The first Full-2D preconditioner is Jacobi:
+% The basic Full-2D preconditioner is Jacobi:
 %
 %   M approx diag(A_diff + G_drift),  M^{-1}r = r ./ diag(M).
 %
 % This is cheap enough to be useful because the drift contribution is
 % already diagonal and the DG/FV transport diagonal can be extracted from
 % the Kronecker parts without assembling the global sparse matrix.
+%
+% As a stronger alternative, full2D_preconditioner='blockjacobi' builds one
+% block per center-coordinate DG DOF. Each block contains all rho_x/rho_y
+% unknowns for that center point, i.e. the contiguous vector segment
+%
+%   F(:, :, iX, iY).
+%
+% This drops center-neighbor DG couplings in M, but keeps the local sparse
+% relative-coordinate transport, potential and CAP terms inside every block.
 
 mode = preconditionerModeToString(readParam(params, ...
     'full2D_preconditioner', 'auto'));
@@ -240,13 +267,18 @@ switch mode
             sysInfo, params, nTotal, ...
             'Using row-absolute-sum scaling requested by full2D_preconditioner.');
         return
+    case {'blockjacobi', 'block-jacobi', 'rho-block-jacobi', ...
+            'relative-block-jacobi', 'rho-blockjacobi'}
+        preconditioner = enableRelativeBlockJacobiPreconditioner( ...
+            preconditioner, sysInfo, params, nTotal);
+        return
     case {'auto', 'jacobi', 'diagonal'}
         useJacobi = strcmp(mode, 'jacobi') || strcmp(mode, 'diagonal') ...
             || nTotal <= maxDof;
     otherwise
         error('DG:Full2D:UnknownPreconditioner', ...
             ['Unknown full2D_preconditioner "%s". Use auto, none, ', ...
-             'jacobi, diagonal or rowabs.'], mode);
+             'jacobi, diagonal, rowabs or blockjacobi.'], mode);
 end
 
 if ~useJacobi
@@ -306,6 +338,16 @@ preconditioner.info.note = ['Jacobi uses diag(A_diff)+diag(G_drift); it avoids '
     'matrix-free path.'];
 end
 
+function tf = shouldRetryBlockJacobiWithRowAbs(flag, preconditioner, params)
+tf = flag ~= 0 ...
+    && preconditioner.enabled ...
+    && isfield(preconditioner, 'info') ...
+    && isfield(preconditioner.info, 'method') ...
+    && strcmp(preconditioner.info.method, 'blockjacobi-rho') ...
+    && readLogicalParam(params, ...
+        'full2D_retryRowAbsOnBlockJacobiFailure', true);
+end
+
 function preconditioner = enableRowAbsPreconditioner(preconditioner, ...
         sysInfo, params, nTotal, reason)
 %ENABLEROWABSPRECONDITIONER Use positive row-sum scaling as M^{-1}.
@@ -342,6 +384,171 @@ preconditioner.info.floor = scaleInfo;
 preconditioner.info.note = ['Row-absolute-sum scaling approximates a ', ...
     'diagonal magnitude preconditioner without inverting zero diagonal ', ...
     'entries or assembling the full matrix.'];
+end
+
+function preconditioner = enableRelativeBlockJacobiPreconditioner( ...
+        preconditioner, sysInfo, params, nTotal)
+%ENABLERELATIVEBLOCKJACOBIPRECONDITIONER Rho-block Jacobi for Full-2D.
+%
+% The global vector order is rho_x, rho_y, X-DG, Y-DG. Therefore all
+% relative-coordinate DOFs for one center-coordinate DG point are contiguous
+% in memory. The preconditioner assembles only the block diagonal
+%
+%   M = blockdiag(B_1, ..., B_nCenter),
+%
+% where B_c is the sparse rho_x/rho_y block of the full operator at fixed
+% center DOF c. The full off-block DG couplings in X/Y are still applied by
+% the Krylov operator A(u); they are only ignored in M^{-1}.
+
+if ~isfield(sysInfo, 'getRelativeBlockData') ...
+        || isempty(sysInfo.getRelativeBlockData)
+    preconditioner.info.reason = ...
+        'Block-Jacobi requested, but relative block data are not available.';
+    return
+end
+
+nRelative = sysInfo.diff.relativeDof;
+maxRelativeDof = readParam(params, ...
+    'full2D_blockJacobiMaxRelativeDof', 512);
+if nRelative > maxRelativeDof
+    preconditioner.info.reason = sprintf(['Block-Jacobi skipped because ', ...
+        'one rho block has %d DOFs, above full2D_blockJacobiMaxRelativeDof=%d.'], ...
+        nRelative, maxRelativeDof);
+    return
+end
+
+maxDof = readParam(params, 'full2D_maxBlockJacobiDof', 2e6);
+allowLarge = readLogicalParam(params, 'full2D_allowLargePreconditioner', false);
+if nTotal > maxDof && ~allowLarge
+    preconditioner.info.reason = sprintf(['Block-Jacobi skipped because ', ...
+        'the preconditioner would cover %d DOFs, above ', ...
+        'full2D_maxBlockJacobiDof=%d. Set ', ...
+        'full2D_allowLargePreconditioner=true only if this memory use is intended.'], ...
+        nTotal, maxDof);
+    return
+end
+
+storageMode = lower(char(readParam(params, ...
+    'full2D_blockJacobiStorage', 'blockdiag')));
+if ~any(strcmp(storageMode, {'blockdiag', 'explicit', 'sparse'}))
+    error('DG:Full2D:UnknownBlockJacobiStorage', ...
+        ['Unknown full2D_blockJacobiStorage "%s". The current ', ...
+        'implementation supports "blockdiag".'], storageMode);
+end
+
+try
+    blockData = sysInfo.getRelativeBlockData();
+    [M, blockInfo] = assembleRelativeBlockJacobiMatrix(blockData, params);
+    decompositionType = lower(char(readParam(params, ...
+        'full2D_blockJacobiDecomposition', 'lu')));
+    Mdec = decomposition(M, decompositionType);
+catch err
+    fallback = readLogicalParam(params, ...
+        'full2D_blockJacobiFallbackToRowAbs', true);
+    if fallback
+        preconditioner = enableRowAbsPreconditioner(preconditioner, ...
+            sysInfo, params, nTotal, ...
+            sprintf(['Block-Jacobi setup failed (%s); using ', ...
+            'row-absolute-sum scaling instead.'], err.message));
+        preconditioner.info.blockJacobiError = err.message;
+        return
+    end
+    rethrow(err)
+end
+
+preconditioner.enabled = true;
+preconditioner.apply = @(r) Mdec\r;
+preconditioner.info.method = 'blockjacobi-rho';
+preconditioner.info.enabled = true;
+preconditioner.info.reason = ['Using relative-coordinate Block-Jacobi ', ...
+    'preconditioner requested by full2D_preconditioner.'];
+preconditioner.info.nTotal = nTotal;
+preconditioner.info.nBlocks = blockData.nCenter;
+preconditioner.info.blockDof = blockData.nRelative;
+preconditioner.info.blockMatrixNnz = nnz(M);
+preconditioner.info.blockMatrixDensity = nnz(M)/numel(M);
+preconditioner.info.storage = storageMode;
+preconditioner.info.decomposition = decompositionType;
+preconditioner.info.blockBuild = blockInfo;
+preconditioner.info.note = ['Each preconditioner block acts on the local ', ...
+    'rho_x/rho_y kernel for one fixed X/Y DG DOF. This is stronger than ', ...
+    'scalar rowabs/Jacobi scaling but still avoids assembling the full ', ...
+    'off-block DG transport matrix.'];
+end
+
+function [M, info] = assembleRelativeBlockJacobiMatrix(blockData, params)
+%ASSEMBLERELATIVEBLOCKJACOBIMATRIX Explicit sparse block diagonal M.
+%
+% This matrix is not the full transport system. It stores only the
+% center-block diagonal and can therefore be much sparser than A. The
+% implementation intentionally starts with an explicit sparse blockdiag
+% representation because it is easy to verify against small assembled
+% systems and can later be replaced by a batched/matrix-free GPU apply.
+
+nCenter = blockData.nCenter;
+nRelative = blockData.nRelative;
+blocks = cell(nCenter, 1);
+blockNnz = zeros(nCenter, 1);
+blockScale = zeros(nCenter, 1);
+blockShift = zeros(nCenter, 1);
+shift = readParam(params, 'full2D_blockJacobiShift', []);
+relativeShift = readParam(params, 'full2D_blockJacobiRelativeShift', ...
+    readParam(params, 'full2D_preconditionerFloor', 1e-10));
+Irelative = speye(nRelative);
+
+for ic = 1:nCenter
+    block = sparse(blockData.getBlock(ic));
+    if readLogicalParam(params, 'full2D_blockJacobiCheckSingular', true) ...
+            && sprank(block) < nRelative
+        error('DG:Full2D:SingularBlockJacobiBlock', ...
+            ['Relative Block-Jacobi block %d has structural rank below ', ...
+            'the block size %d. Use rowabs, choose an even rho grid, or ', ...
+            'set full2D_blockJacobiCheckSingular=false for experiments.'], ...
+            ic, nRelative);
+    end
+    blockScale(ic) = max(full(sum(abs(block), 2)));
+    if isempty(shift)
+        blockShift(ic) = relativeShift*max(blockScale(ic), 1);
+    else
+        blockShift(ic) = shift;
+    end
+    if blockShift(ic) ~= 0
+        % The exact center-block diagonal can be singular because the
+        % omitted neighboring DG couplings may regularize a local kernel.
+        % A tiny shift is applied only to M, not to the physical system A.
+        block = block + blockShift(ic)*Irelative;
+    end
+    blocks{ic} = block;
+    blockNnz(ic) = nnz(block);
+end
+
+M = blkdiag(blocks{:});
+M = sparse(M);
+
+info = struct;
+info.nBlocks = nCenter;
+info.blockDof = nRelative;
+info.totalDof = nCenter*nRelative;
+info.shift = shift;
+info.relativeShift = relativeShift;
+info.shiftMode = ternary(isempty(shift), 'relative-to-local-rowabs', 'absolute');
+info.blockScaleMin = min(blockScale);
+info.blockScaleMax = max(blockScale);
+info.blockShiftMin = min(blockShift);
+info.blockShiftMax = max(blockShift);
+info.blockNnzMin = min(blockNnz);
+info.blockNnzMax = max(blockNnz);
+info.blockNnzMean = mean(blockNnz);
+info.note = ['B_c includes the local rho transport block and the local ', ...
+    'drift/CAP diagonal. Off-block X/Y DG couplings are omitted.'];
+end
+
+function value = ternary(condition, trueValue, falseValue)
+if condition
+    value = trueValue;
+else
+    value = falseValue;
+end
 end
 
 function mode = preconditionerModeToString(rawMode)

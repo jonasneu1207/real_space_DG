@@ -146,6 +146,8 @@ info.getDiagonal = @() assembleKronDiagonal(operatorParts, ...
     p.dg.nCenterDof, p.relative.nDof);
 info.getRowAbsSum = @() assembleKronRowAbsSum(operatorParts, ...
     p.dg.nCenterDof, p.relative.nDof);
+info.getRelativeBlockData = @() makeRelativeBlockData(operatorParts, ...
+    p.dg.nCenterDof, p.relative.nDof);
 end
 
 function axisOps = oneDimensionalDGOperators(axis)
@@ -429,6 +431,67 @@ for ip = 1:numel(operatorParts)
     rowAbsSum = rowAbsSum ...
         + abs(part.coefficient)*kron(centerRowAbs, relativeRowAbs);
 end
+end
+
+function blockData = makeRelativeBlockData(operatorParts, nCenter, nRelative)
+%MAKERELATIVEBLOCKDATA Center-block diagonal of the rho-transport operator.
+%
+% With the global ordering
+%
+%   F = F(rho_x,rho_y,X,Y),  rho_x fastest,
+%
+% the natural Block-Jacobi partition is one block per center-coordinate
+% degree of freedom. For a separable contribution coefficient*kron(C,R),
+% the block belonging to center DOF c is
+%
+%   coefficient * C(c,c) * R.
+%
+% Neighbor couplings between different X/Y DG DOFs are deliberately omitted:
+% this is precisely the Jacobi approximation on the center-coordinate block
+% structure, while each block still contains the full sparse rho_x/rho_y
+% coupling of the local transport operator.
+
+parts = struct('name', {}, 'coefficient', {}, ...
+    'centerDiagonal', {}, 'relativeMatrix', {}, 'relativeNnz', {});
+for ip = 1:numel(operatorParts)
+    part = operatorParts{ip};
+    centerDiagonal = full(diag(part.centerMatrix));
+    if part.coefficient == 0 || nnz(centerDiagonal) == 0 ...
+            || nnz(part.relativeMatrix) == 0
+        continue
+    end
+    id = numel(parts) + 1;
+    parts(id).name = part.name;
+    parts(id).coefficient = part.coefficient;
+    parts(id).centerDiagonal = centerDiagonal;
+    parts(id).relativeMatrix = sparse(part.relativeMatrix);
+    parts(id).relativeNnz = nnz(part.relativeMatrix);
+end
+
+blockData = struct;
+blockData.nCenter = nCenter;
+blockData.nRelative = nRelative;
+blockData.nTotal = nCenter*nRelative;
+blockData.parts = parts;
+blockData.nParts = numel(parts);
+blockData.blockType = 'relative-rho-blocks-per-center-dof';
+blockData.dofOrder = {'rho_x', 'rho_y', 'X-DG-DOF', 'Y-DG-DOF'};
+blockData.note = ['Transport block c contains sum_i coeff_i*C_i(c,c)*R_i; ', ...
+    'all off-diagonal center-coordinate DG couplings are dropped by the ', ...
+    'Block-Jacobi approximation.'];
+blockData.getBlock = @(centerId) relativeBlockFromParts(parts, ...
+    centerId, nRelative);
+end
+
+function block = relativeBlockFromParts(parts, centerId, nRelative)
+block = spalloc(nRelative, nRelative, 0);
+for ip = 1:numel(parts)
+    scale = parts(ip).coefficient*parts(ip).centerDiagonal(centerId);
+    if scale ~= 0
+        block = block + scale*parts(ip).relativeMatrix;
+    end
+end
+block = sparse(block);
 end
 
 function rhs = assembleRhs(rhsParts, nCenter, nRelative)

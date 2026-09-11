@@ -69,6 +69,7 @@ info.assemble = @() assembleSystem(diffInfo, driftInfo);
 info.assembleRhs = @() diffInfo.assembleRhs();
 info.getDiagonal = @() getSystemDiagonal(diffInfo, driftInfo);
 info.getRowAbsSum = @() getSystemRowAbsSum(diffInfo, driftInfo);
+info.getRelativeBlockData = @() getSystemRelativeBlockData(diffInfo, driftInfo);
 end
 
 function y = applySystem(diffInfo, driftInfo, u)
@@ -89,6 +90,58 @@ end
 function rowAbsSum = getSystemRowAbsSum(diffInfo, driftInfo)
 %GETSYSTEMROWABSSUM Row magnitude scaling for matrix-free preconditioning.
 rowAbsSum = diffInfo.getRowAbsSum() + driftInfo.getRowAbsSum();
+end
+
+function blockData = getSystemRelativeBlockData(diffInfo, driftInfo)
+%GETSYSTEMRELATIVEBLOCKDATA Block-Jacobi data for rho_x/rho_y kernels.
+%
+% The Full-2D vector is ordered as
+%
+%   F(iRhoX,iRhoY,iX,iY) -> F(:),
+%
+% so the contiguous entries
+%
+%   ((c-1)*nRelative+1) : c*nRelative
+%
+% contain all relative-coordinate unknowns for one fixed center-coordinate
+% DG DOF c. The Block-Jacobi preconditioner uses exactly these contiguous
+% rho-blocks:
+%
+%   B_c = A_diff(c,c in center space) + diag(G_drift(:,c)).
+%
+% This keeps the preconditioner local in X/Y, but it retains the sparse
+% rho_x/rho_y transport coupling and the local diagonal potential/CAP term.
+
+if ~isfield(diffInfo, 'getRelativeBlockData') ...
+        || isempty(diffInfo.getRelativeBlockData)
+    error('DG:Full2D:MissingBlockData', ...
+        'Diff operator does not expose relative block data.');
+end
+
+diffBlockData = diffInfo.getRelativeBlockData();
+driftDiagonal = reshape(driftInfo.getDiagonal(), ...
+    diffBlockData.nRelative, diffBlockData.nCenter);
+
+blockData = struct;
+blockData.nCenter = diffBlockData.nCenter;
+blockData.nRelative = diffBlockData.nRelative;
+blockData.nTotal = diffBlockData.nTotal;
+blockData.diff = diffBlockData;
+blockData.driftDiagonal = driftDiagonal;
+blockData.blockType = 'relative-rho-blocks-per-center-dof';
+blockData.dofOrder = {'rho_x', 'rho_y', 'X-DG-DOF', 'Y-DG-DOF'};
+blockData.note = ['System block c is the local rho_x/rho_y transport ', ...
+    'block plus the diagonal drift/CAP entries for center DOF c. ', ...
+    'Off-block center-coordinate DG couplings remain in A, not in M.'];
+blockData.getBlock = @(centerId) systemRelativeBlock(diffBlockData, ...
+    driftDiagonal, centerId);
+end
+
+function block = systemRelativeBlock(diffBlockData, driftDiagonal, centerId)
+nRelative = diffBlockData.nRelative;
+block = diffBlockData.getBlock(centerId) ...
+    + spdiags(driftDiagonal(:, centerId), 0, nRelative, nRelative);
+block = sparse(block);
 end
 
 function reason = matrixReason(assembled, diffInfo, driftInfo, nTotal)

@@ -214,6 +214,86 @@ classdef full2DDriftSystemSolveTest < matlab.unittest.TestCase
                 reference.rho, 1e-7);
         end
 
+        function gmresCanUseRhoBlockJacobiPreconditioner(testCase)
+            mat = makeSmallMat();
+            mat.dg.params.N_rho_x = 4;
+            mat.dg.params.N_rho_y = 4;
+
+            mat.dg.params.full2D_assembleDiffMatrix = false;
+            mat.dg.params.full2D_assembleDriftMatrix = false;
+            mat.dg.params.full2D_solve = true;
+            mat.dg.params.full2D_solver = 'gmres';
+            mat.dg.params.full2D_preconditioner = 'blockjacobi';
+            mat.dg.params.full2D_solverTol = 1e-10;
+            mat.dg.params.full2D_solverMaxIt = 500;
+
+            DG = solve_transport_DG_full2D(mat, mat.V, 0.2, 0.1);
+            residual = norm(DG.info.apply(DG.rho) - DG.rhs) ...
+                /max(norm(DG.rhs), eps);
+
+            testCase.verifyTrue(DG.info.solve.preconditioner.enabled);
+            testCase.verifyEqual(DG.info.solve.preconditioner.requested, ...
+                'blockjacobi');
+            testCase.verifyEqual(DG.info.solve.preconditioner.method, ...
+                'blockjacobi-rho');
+            testCase.verifyEqual(DG.info.solve.preconditioner.blockDof, ...
+                DG.p.relative.nDof);
+            testCase.verifyEqual(DG.info.solve.preconditioner.nBlocks, ...
+                DG.p.dg.nCenterDof);
+            testCase.verifyNotEmpty(DG.rho);
+            testCase.verifyEqual(DG.info.solve.flag, 0);
+            testCase.verifyTrue(isfinite(DG.info.solve.relres));
+            testCase.verifyLessThan(residual, 1e-7);
+        end
+
+        function blockJacobiFallsBackForSingularRhoBlocks(testCase)
+            mat = makeSmallMat();
+            mat.dg.params.full2D_assembleDiffMatrix = false;
+            mat.dg.params.full2D_assembleDriftMatrix = false;
+            mat.dg.params.full2D_solve = true;
+            mat.dg.params.full2D_solver = 'bicgstab';
+            mat.dg.params.full2D_preconditioner = 'blockjacobi';
+            mat.dg.params.full2D_solverTol = 1e-10;
+            mat.dg.params.full2D_solverMaxIt = 2000;
+
+            DG = solve_transport_DG_full2D(mat, mat.V, 0.2, 0.1);
+
+            testCase.verifyTrue(DG.info.solve.preconditioner.enabled);
+            testCase.verifyEqual(DG.info.solve.preconditioner.requested, ...
+                'blockjacobi');
+            testCase.verifyEqual(DG.info.solve.preconditioner.method, ...
+                'rowabs');
+            testCase.verifyTrue(isfield(DG.info.solve.preconditioner, ...
+                'blockJacobiError'));
+            testCase.verifyEqual(DG.info.solve.flag, 0);
+        end
+
+        function bicgstabRetriesRowAbsAfterBlockJacobiFailure(testCase)
+            mat = makeSmallMat();
+            mat.dg.params.N_rho_x = 4;
+            mat.dg.params.N_rho_y = 4;
+            mat.dg.params.full2D_assembleDiffMatrix = false;
+            mat.dg.params.full2D_assembleDriftMatrix = false;
+            mat.dg.params.full2D_solve = true;
+            mat.dg.params.full2D_solver = 'bicgstab';
+            mat.dg.params.full2D_preconditioner = 'blockjacobi';
+            mat.dg.params.full2D_solverTol = 1e-10;
+            mat.dg.params.full2D_solverMaxIt = 2000;
+
+            DG = solve_transport_DG_full2D(mat, mat.V, 0.2, 0.1);
+
+            testCase.verifyTrue(DG.info.solve.preconditioner.enabled);
+            testCase.verifyEqual(DG.info.solve.preconditioner.requested, ...
+                'blockjacobi');
+            testCase.verifyEqual(DG.info.solve.preconditioner.method, ...
+                'rowabs');
+            testCase.verifyTrue(isfield(DG.info.solve.preconditioner, ...
+                'retryFrom'));
+            testCase.verifyEqual(DG.info.solve.preconditioner.retryFrom.method, ...
+                'blockjacobi-rho');
+            testCase.verifyEqual(DG.info.solve.flag, 0);
+        end
+
         function autoPreconditionerRespectsStorageLimit(testCase)
             mat = makeSmallMat();
             mat.dg.params.full2D_assembleDiffMatrix = false;
