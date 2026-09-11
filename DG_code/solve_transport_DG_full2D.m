@@ -108,8 +108,8 @@ solveInfo.requestedMode = mode;
 solveInfo.nTotal = nTotal;
 solveInfo.matrixAssembled = sysInfo.fullMatrixAssembled;
 solveInfo.matrixFreeAvailable = sysInfo.matrixFreeAvailable;
-solveInfo.tolerance = readParam(params, 'full2D_solverTol', 1e-6);
-solveInfo.maxIterations = readParam(params, 'full2D_solverMaxIt', 200);
+solveInfo.tolerance = readParam(params, 'full2D_solverTol', 1e-3);
+solveInfo.maxIterations = readParam(params, 'full2D_solverMaxIt', 1400);
 
 [doSolve, skipStatus] = shouldSolve(mode, nTotal, maxAutoSolveDof);
 if ~doSolve
