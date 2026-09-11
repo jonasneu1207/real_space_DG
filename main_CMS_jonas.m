@@ -152,7 +152,7 @@ end
 mat.dg.params.permute_shell = true;
 mat.dg.params.rho = true;
 % false: phase/eigen basis, true: relative-coordinate rho basis (real space)
-mat.dg.params.full2D = false;                                % true: full 2D Wigner transport with DG in X/Y and FV in two relative coordinates
+mat.dg.params.full2D = true;                                % true: full 2D Wigner transport with DG in X/Y and FV in two relative coordinates
 %mat.dg.params.full2D_solve = 'direct';
 
 mat.dg.params.full2D_maxDirectSolveDof = 160000;
