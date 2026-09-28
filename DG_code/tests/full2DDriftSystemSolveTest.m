@@ -246,6 +246,58 @@ classdef full2DDriftSystemSolveTest < matlab.unittest.TestCase
             testCase.verifyLessThan(residual, 1e-7);
         end
 
+        function bicgstabReportsSolverProgress(testCase)
+            mat = makeSmallMat();
+            mat.dg.params.full2D_assembleDiffMatrix = false;
+            mat.dg.params.full2D_assembleDriftMatrix = false;
+            mat.dg.params.full2D_solve = true;
+            mat.dg.params.full2D_solver = 'bicgstab';
+            mat.dg.params.full2D_preconditioner = 'rowabs';
+            mat.dg.params.full2D_solverTol = 1e-10;
+            mat.dg.params.full2D_solverMaxIt = 2;
+            mat.dg.params.full2D_showSolverProgress = true;
+            mat.dg.params.full2D_solverProgressMode = 'text';
+            mat.dg.params.full2D_solverProgressUpdateSeconds = 0;
+
+            DG = solve_transport_DG_full2D(mat, mat.V, 0.2, 0.1);
+
+            testCase.verifyTrue(DG.info.solve.progress.enabled);
+            testCase.verifyEqual(DG.info.solve.progress.mode, 'text');
+            testCase.verifyEqual(DG.info.solve.progress.solver, 'bicgstab');
+            testCase.verifyEqual(DG.info.solve.progress.maxIterations, 2);
+            testCase.verifyEqual( ...
+                DG.info.solve.progress.completedIterations, ...
+                0.5*(numel(DG.info.solve.resvec)-1));
+            testCase.verifyGreaterThan(DG.info.solve.progress.updateCount, 0);
+        end
+
+        function gmresReportsRestartProgress(testCase)
+            mat = makeSmallMat();
+            mat.dg.params.full2D_assembleDiffMatrix = false;
+            mat.dg.params.full2D_assembleDriftMatrix = false;
+            mat.dg.params.full2D_solve = true;
+            mat.dg.params.full2D_solver = 'gmres';
+            mat.dg.params.full2D_preconditioner = 'rowabs';
+            mat.dg.params.full2D_solverTol = 1e-10;
+            mat.dg.params.full2D_solverMaxIt = 2;
+            mat.dg.params.full2D_gmresRestart = 3;
+            mat.dg.params.full2D_showSolverProgress = true;
+            mat.dg.params.full2D_solverProgressMode = 'text';
+            mat.dg.params.full2D_solverProgressUpdateSeconds = 0;
+
+            DG = solve_transport_DG_full2D(mat, mat.V, 0.2, 0.1);
+            expectedIterations = numel(DG.info.solve.resvec)-1;
+
+            testCase.verifyTrue(DG.info.solve.progress.enabled);
+            testCase.verifyEqual(DG.info.solve.progress.mode, 'text');
+            testCase.verifyEqual(DG.info.solve.progress.solver, 'gmres');
+            testCase.verifyEqual(DG.info.solve.progress.maxWorkUnits, 6);
+            testCase.verifyEqual( ...
+                DG.info.solve.progress.completedIterations, ...
+                double(expectedIterations));
+            testCase.verifyGreaterThan(DG.info.solve.progress.updateCount, 0);
+        end
+
         function blockJacobiFallsBackForSingularRhoBlocks(testCase)
             mat = makeSmallMat();
             mat.dg.params.full2D_assembleDiffMatrix = false;
@@ -369,6 +421,7 @@ mat.dg.params.full2D_Q_diff_y = 0.7;
 mat.dg.params.full2D_Q_drift = 1;
 mat.dg.params.full2D_drift_scale = 1;
 mat.dg.params.full2D_cap_scale = 0.1;
+mat.dg.params.full2D_showSolverProgress = false;
 end
 
 function u = deterministicVector(n)

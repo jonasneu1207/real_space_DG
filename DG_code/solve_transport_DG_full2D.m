@@ -19,6 +19,13 @@ function DG = solve_transport_DG_full2D(mat, Vxy, EfL, EfR)
 %   default. Large systems keep A empty and expose sysInfo.apply(u). A
 %   matrix-free Krylov solve is available via params.full2D_solve = true
 %   and params.full2D_solver = 'bicgstab' or 'gmres'.
+%
+% Krylov progress:
+%   params.full2D_showSolverProgress = true enables a progress display for
+%   BICGSTAB and GMRES. params.full2D_solverProgressMode may be 'auto'
+%   (GUI waitbar in the MATLAB desktop, text otherwise), 'waitbar', 'text'
+%   or 'off'. The display is throttled by
+%   params.full2D_solverProgressUpdateSeconds (default 0.25 s).
 
 solverDir = fileparts(mfilename('fullpath'));
 addpath(fullfile(solverDir, 'core'));
@@ -162,29 +169,27 @@ switch solverName
 
     case 'bicgstab'
         applyA = @(u) sysInfo.apply(u);
-        if preconditioner.enabled
-            [rho, flag, relres, iter, resvec] = bicgstab(applyA, rhs, ...
-                solveInfo.tolerance, solveInfo.maxIterations, ...
-                preconditioner.apply);
-        else
-            [rho, flag, relres, iter, resvec] = bicgstab(applyA, rhs, ...
-                solveInfo.tolerance, solveInfo.maxIterations);
-        end
+        [rho, flag, relres, iter, resvec, progressInfo] = ...
+            runBicgstabWithProgress(applyA, rhs, preconditioner, ...
+            solveInfo.tolerance, solveInfo.maxIterations, params, '');
         if shouldRetryBlockJacobiWithRowAbs(flag, preconditioner, params)
             firstAttempt = struct( ...
                 'method', preconditioner.info.method, ...
                 'flag', flag, ...
                 'relres', relres, ...
-                'iterations', iter);
+                'iterations', iter, ...
+                'progress', progressInfo);
             preconditioner = enableRowAbsPreconditioner(preconditioner, ...
                 sysInfo, params, nTotal, ...
                 sprintf(['BICGSTAB with Block-Jacobi returned flag %d; ', ...
                 'retrying with row-absolute-sum scaling.'], flag));
             if preconditioner.enabled
-                [rho, flag, relres, iter, resvec] = bicgstab(applyA, rhs, ...
-                    solveInfo.tolerance, solveInfo.maxIterations, ...
-                    preconditioner.apply);
+                [rho, flag, relres, iter, resvec, progressInfo] = ...
+                    runBicgstabWithProgress(applyA, rhs, preconditioner, ...
+                    solveInfo.tolerance, solveInfo.maxIterations, params, ...
+                    'rowabs retry');
                 preconditioner.info.retryFrom = firstAttempt;
+                progressInfo.previousAttempt = firstAttempt.progress;
             end
         end
         solveInfo.status = iterativeStatus('bicgstab', flag);
@@ -192,23 +197,20 @@ switch solverName
         solveInfo.relres = relres;
         solveInfo.iterations = iter;
         solveInfo.resvec = resvec;
+        solveInfo.progress = progressInfo;
 
     case 'gmres'
         applyA = @(u) sysInfo.apply(u);
         restart = readParam(params, 'full2D_gmresRestart', []);
-        if preconditioner.enabled
-            [rho, flag, relres, iter, resvec] = gmres(applyA, rhs, restart, ...
-                solveInfo.tolerance, solveInfo.maxIterations, ...
-                preconditioner.apply);
-        else
-            [rho, flag, relres, iter, resvec] = gmres(applyA, rhs, restart, ...
-                solveInfo.tolerance, solveInfo.maxIterations);
-        end
+        [rho, flag, relres, iter, resvec, progressInfo] = ...
+            runGmresWithProgress(applyA, rhs, preconditioner, restart, ...
+            solveInfo.tolerance, solveInfo.maxIterations, nTotal, params);
         solveInfo.status = iterativeStatus('gmres', flag);
         solveInfo.flag = flag;
         solveInfo.relres = relres;
         solveInfo.iterations = iter;
         solveInfo.resvec = resvec;
+        solveInfo.progress = progressInfo;
 
     otherwise
         error('DG:Full2D:UnknownSolver', ...
@@ -217,6 +219,317 @@ switch solverName
 end
 solveInfo.preconditioner = preconditioner.info;
 end
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
+function [x, flag, relres, iter, resvec, progressInfo] = ...
+        runBicgstabWithProgress(applyA, rhs, preconditioner, tolerance, ...
+        maxIterations, params, attemptLabel)
+%RUNBICGSTABWITHPROGRESS Run BICGSTAB with a throttled progress callback.
+%
+% MATLAB's BICGSTAB has no public iteration callback. Its preconditioner is
+% applied once per half iteration, so the monitored preconditioner provides
+% the live iteration count without changing the Krylov recurrence. If no
+% numerical preconditioner is requested, the monitored action is identity.
+
+progress = createKrylovProgress(params, 'bicgstab', maxIterations, [], ...
+    numel(rhs), attemptLabel);
+cleanupProgress = onCleanup(@() progress.close());
+
+if progress.enabled
+    monitoredA = @(u) progress.applyOperator(applyA, u);
+    monitoredM = @(r) progress.applyPreconditioner( ...
+        preconditioner.apply, r);
+    [x, flag, relres, iter, resvec] = bicgstab(monitoredA, rhs, ...
+        tolerance, maxIterations, monitoredM);
+elseif preconditioner.enabled
+    [x, flag, relres, iter, resvec] = bicgstab(applyA, rhs, ...
+        tolerance, maxIterations, preconditioner.apply);
+else
+    [x, flag, relres, iter, resvec] = bicgstab(applyA, rhs, ...
+        tolerance, maxIterations);
+end
+
+progress.finish(iter, resvec, flag, relres);
+progressInfo = progress.getInfo();
+clear cleanupProgress
+end
+
+function [x, flag, relres, iter, resvec, progressInfo] = ...
+        runGmresWithProgress(applyA, rhs, preconditioner, restart, ...
+        tolerance, maxIterations, nTotal, params)
+%RUNGMRESWITHPROGRESS Run GMRES and monitor inner Krylov iterations.
+%
+% With restart=[], MATLAB interprets maxIterations as the maximum number of
+% inner iterations. With a finite restart, maxIterations counts outer
+% restart cycles; the progress label therefore reports both the accumulated
+% inner iterations and the current outer cycle.
+
+progress = createKrylovProgress(params, 'gmres', maxIterations, restart, ...
+    nTotal, '');
+cleanupProgress = onCleanup(@() progress.close());
+
+if progress.enabled
+    monitoredA = @(u) progress.applyOperator(applyA, u);
+    monitoredM = @(r) progress.applyPreconditioner( ...
+        preconditioner.apply, r);
+    [x, flag, relres, iter, resvec] = gmres(monitoredA, rhs, restart, ...
+        tolerance, maxIterations, monitoredM);
+elseif preconditioner.enabled
+    [x, flag, relres, iter, resvec] = gmres(applyA, rhs, restart, ...
+        tolerance, maxIterations, preconditioner.apply);
+else
+    [x, flag, relres, iter, resvec] = gmres(applyA, rhs, restart, ...
+        tolerance, maxIterations);
+end
+
+progress.finish(iter, resvec, flag, relres);
+progressInfo = progress.getInfo();
+clear cleanupProgress
+end
+
+function progress = createKrylovProgress(params, solverName, ...
+        maxIterations, restart, nTotal, attemptLabel)
+%CREATEKRYLOVPROGRESS Create GUI/text progress callbacks for Krylov solvers.
+%
+% The live count is inferred from operator/preconditioner applications
+% because MATLAB's public bicgstab/gmres interfaces expose no callback. The
+% final display uses RESVEC to report all work actually performed. ITER is
+% retained separately because MATLAB can return the index of an earlier,
+% better approximation when a solver does not converge.
+
+showProgress = readLogicalParam(params, ...
+    'full2D_showSolverProgress', true);
+requestedMode = lower(char(readParam(params, ...
+    'full2D_solverProgressMode', 'auto')));
+if ~showProgress || any(strcmp(requestedMode, ...
+        {'off', 'none', 'false', 'no'}))
+    mode = 'off';
+elseif strcmp(requestedMode, 'auto')
+    if usejava('desktop')
+        mode = 'waitbar';
+    else
+        mode = 'text';
+    end
+elseif any(strcmp(requestedMode, {'waitbar', 'text'}))
+    mode = requestedMode;
+else
+    error('DG:Full2D:UnknownSolverProgressMode', ...
+        ['Unknown full2D_solverProgressMode "%s". Use auto, waitbar, ', ...
+         'text or off.'], requestedMode);
+end
+
+updateSeconds = readParam(params, ...
+    'full2D_solverProgressUpdateSeconds', 0.25);
+updateSeconds = max(0, double(updateSeconds));
+[maxWorkUnits, gmresInner, gmresOuter, gmresRestarted] = ...
+    krylovWorkLimits(solverName, maxIterations, restart, nTotal);
+
+preconditionerCalls = 0;
+operatorCalls = 0;
+updateCount = 0;
+lastCompleted = 0;
+lastUpdateTimer = tic;
+waitbarHandle = [];
+textLineOpen = false;
+finalIterations = [];
+finalFlag = [];
+finalRelres = [];
+
+displayName = upper(solverName);
+if ~isempty(attemptLabel)
+    displayName = sprintf('%s (%s)', displayName, attemptLabel);
+end
+
+if strcmp(mode, 'waitbar')
+    try
+        waitbarHandle = waitbar(0, progressMessage(0), ...
+            'Name', 'Full-2D Wigner solver', 'NumberTitle', 'off');
+    catch
+        mode = 'text';
+    end
+end
+
+progress = struct;
+progress.enabled = ~strcmp(mode, 'off');
+progress.applyOperator = @applyOperator;
+progress.applyPreconditioner = @applyPreconditioner;
+progress.finish = @finish;
+progress.close = @closeProgress;
+progress.getInfo = @getInfo;
+
+    function y = applyOperator(baseOperator, u)
+        y = baseOperator(u);
+        operatorCalls = operatorCalls + 1;
+        if strcmp(solverName, 'bicgstab') && preconditionerCalls > 0
+            updateProgress(0.5*preconditionerCalls, false);
+        end
+    end
+
+    function y = applyPreconditioner(basePreconditioner, r)
+        if isempty(basePreconditioner)
+            y = r;
+        else
+            y = basePreconditioner(r);
+        end
+        preconditionerCalls = preconditionerCalls + 1;
+        if strcmp(solverName, 'gmres')
+            completed = gmresLiveIterations(preconditionerCalls, ...
+                gmresInner, gmresRestarted);
+            updateProgress(completed, false);
+        end
+    end
+
+    function updateProgress(completed, force)
+        completed = min(max(double(completed), 0), maxWorkUnits);
+        if ~force && updateCount > 0 && toc(lastUpdateTimer) < updateSeconds
+            return
+        end
+        if ~force && completed <= lastCompleted
+            return
+        end
+
+        lastCompleted = completed;
+        lastUpdateTimer = tic;
+        updateCount = updateCount + 1;
+        fraction = min(completed/max(maxWorkUnits, 1), 1);
+        message = progressMessage(completed);
+        if strcmp(mode, 'waitbar')
+            if isgraphics(waitbarHandle)
+                waitbar(fraction, waitbarHandle, message);
+                drawnow limitrate nocallbacks
+            end
+        elseif strcmp(mode, 'text')
+            renderTextProgress(fraction, message, false);
+        end
+    end
+
+    function finish(iter, resvec, flag, relres)
+        finalIterations = iter;
+        finalFlag = flag;
+        finalRelres = relres;
+        completed = exactCompletedIterations(solverName, resvec);
+        lastCompleted = completed;
+        updateCount = updateCount + 1;
+        message = finalMessage(completed, flag, relres);
+        if strcmp(mode, 'waitbar')
+            if isgraphics(waitbarHandle)
+                waitbar(1, waitbarHandle, message);
+                drawnow limitrate nocallbacks
+            end
+        elseif strcmp(mode, 'text')
+            renderTextProgress(1, message, true);
+        end
+    end
+
+    function message = progressMessage(completed)
+        if strcmp(solverName, 'gmres') && gmresRestarted
+            cycle = min(max(ceil(max(completed, 1)/gmresInner), 1), ...
+                gmresOuter);
+            message = sprintf(['%s: %.0f / %.0f innere Iterationen ', ...
+                '(Zyklus %d / %d)'], displayName, completed, ...
+                maxWorkUnits, cycle, gmresOuter);
+        else
+            message = sprintf('%s: %g / %g Iterationen', displayName, ...
+                completed, maxWorkUnits);
+        end
+    end
+
+    function message = finalMessage(completed, flag, relres)
+        if flag == 0
+            state = 'konvergiert';
+        else
+            state = sprintf('beendet, flag=%d', flag);
+        end
+        message = sprintf('%s: %s nach %g Iterationen, relres=%.3e', ...
+            displayName, state, completed, relres);
+    end
+
+    function renderTextProgress(fraction, message, finishLine)
+        barWidth = 30;
+        filled = min(floor(fraction*barWidth), barWidth);
+        bar = [repmat('#', 1, filled), ...
+            repmat('-', 1, barWidth-filled)];
+        fprintf('\r[%s] %s                              ', bar, message);
+        textLineOpen = true;
+        if finishLine
+            fprintf('\n');
+            textLineOpen = false;
+        end
+    end
+
+    function closeProgress()
+        if isgraphics(waitbarHandle)
+            delete(waitbarHandle);
+        end
+        if strcmp(mode, 'text') && textLineOpen
+            fprintf('\n');
+            textLineOpen = false;
+        end
+    end
+
+    function info = getInfo()
+        info = struct;
+        info.enabled = ~strcmp(mode, 'off');
+        info.mode = mode;
+        info.solver = solverName;
+        info.maxIterations = maxIterations;
+        info.maxWorkUnits = maxWorkUnits;
+        info.gmresRestart = restart;
+        info.gmresInnerIterationsPerCycle = gmresInner;
+        info.gmresOuterCycles = gmresOuter;
+        info.operatorCalls = operatorCalls;
+        info.preconditionerCalls = preconditionerCalls;
+        info.updateCount = updateCount;
+        info.completedIterations = lastCompleted;
+        info.finalIterations = finalIterations;
+        info.finalFlag = finalFlag;
+        info.finalRelres = finalRelres;
+        info.note = ['Live progress is inferred from Krylov operator and ', ...
+            'preconditioner applications; the final completed count uses ', ...
+            'RESVEC while finalIterations preserves MATLAB''s ITER output.'];
+    end
+end
+
+function [maxWork, inner, outer, restarted] = ...
+        krylovWorkLimits(solverName, maxIterations, restart, nTotal)
+if strcmp(solverName, 'bicgstab')
+    maxWork = maxIterations;
+    inner = 1;
+    outer = maxIterations;
+    restarted = false;
+    return
+end
+
+restarted = ~isempty(restart) && restart ~= nTotal;
+if restarted
+    inner = min(max(double(restart), 1), nTotal);
+    outer = maxIterations;
+else
+    inner = min(maxIterations, nTotal);
+    outer = 1;
+end
+maxWork = inner*outer;
+end
+
+function completed = gmresLiveIterations(preconditionerCalls, inner, restarted)
+% The first preconditioner call belongs to the initial residual. Restarted
+% GMRES adds one residual-preconditioning call after every inner cycle.
+completed = max(preconditionerCalls - 1, 0);
+if restarted
+    completed = completed - floor(completed/(inner + 1));
+end
+end
+
+function completed = exactCompletedIterations(solverName, resvec)
+% RESVEC records every completed Krylov step even when ITER points to the
+% best earlier approximation returned after a failed convergence attempt.
+if strcmp(solverName, 'bicgstab')
+    completed = 0.5*max(numel(resvec) - 1, 0);
+else
+    completed = max(numel(resvec) - 1, 0);
+end
+end
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%
 function preconditioner = buildPreconditioner(sysInfo, params, solverName, nTotal)
