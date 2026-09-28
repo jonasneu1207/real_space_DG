@@ -156,7 +156,6 @@ mat.dg.params.full2D = true;                                % true: full 2D Wign
 %mat.dg.params.full2D_solve = 'direct';
 
 mat.dg.params.full2D_solver = 'gmres';        % für echten Block-Jacobi aktuell robuster
-mat.dg.params.full2D_preconditioner = 'blockjacobi';
 mat.dg.params.full2D_maxDirectSolveDof = 160000;
 mat.dg.params.full2D_maxAssembledDof = 160000;
 mat.dg.params.full2D_preconditioner = 'rowabs';             % Preconditioner for BICGSTAB or GMRES when trying to solve huge systems via matrix-free operators
