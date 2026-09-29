@@ -298,6 +298,74 @@ classdef full2DDriftSystemSolveTest < matlab.unittest.TestCase
             testCase.verifyGreaterThan(DG.info.solve.progress.updateCount, 0);
         end
 
+        function gpuFlagRejectsDirectSolverBeforeDeviceSetup(testCase)
+            mat = makeSmallMat();
+            mat.dg.params.full2D_assembleDiffMatrix = false;
+            mat.dg.params.full2D_assembleDriftMatrix = false;
+            mat.dg.params.full2D_solve = true;
+            mat.dg.params.full2D_solver = 'direct';
+            mat.dg.params.full2D_gpu = true;
+
+            testCase.verifyError( ...
+                @() solve_transport_DG_full2D(mat, mat.V, 0.2, 0.1), ...
+                'DG:Full2D:GPUDirectSolverUnsupported');
+        end
+
+        function gpuOperatorSetupStaysLazyAndMatrixFree(testCase)
+            mat = makeSmallMat();
+            mat.dg.params.full2D_gpu = true;
+            mat.dg.params.full2D_assembleDiffMatrix = true;
+            mat.dg.params.full2D_assembleDriftMatrix = true;
+            p = initParams_full2D(mat, mat.V, 0.2, 0.1);
+
+            [A, rhs, info] = get_SysM_full2D( ...
+                mat, p, mat.V, 0.2, 0.1);
+
+            testCase.verifyEmpty(A);
+            testCase.verifyEmpty(rhs);
+            testCase.verifyFalse(info.fullMatrixAssembled);
+            testCase.verifyFalse(info.drift.diagonalStored);
+            testCase.verifyTrue(isa(info.makeGPUApply, 'function_handle'));
+        end
+
+        function gpuBicgstabMatchesCpuPath(testCase)
+            testCase.assumeTrue(canUseGPU, ...
+                'A MATLAB-compatible GPU is required for this test.');
+            cpuMat = makeGPUSolverMat('bicgstab', false);
+            gpuMat = makeGPUSolverMat('bicgstab', true);
+
+            cpuDG = solve_transport_DG_full2D(cpuMat, cpuMat.V, 0.2, 0.1);
+            gpuDG = solve_transport_DG_full2D(gpuMat, gpuMat.V, 0.2, 0.1);
+
+            testCase.verifyTrue(gpuDG.info.solve.gpu.enabled);
+            testCase.verifyTrue(gpuDG.info.solve.gpu.resultGathered);
+            testCase.verifyEqual(gpuDG.info.solve.preconditioner.executionDevice, ...
+                'gpu');
+            testCase.verifyClass(gpuDG.rho, 'double');
+            verifyRelativeSmall(testCase, gpuDG.rho-cpuDG.rho, ...
+                cpuDG.rho, 1e-6);
+        end
+
+        function gpuGmresMatchesCpuPath(testCase)
+            testCase.assumeTrue(canUseGPU, ...
+                'A MATLAB-compatible GPU is required for this test.');
+            cpuMat = makeGPUSolverMat('gmres', false);
+            gpuMat = makeGPUSolverMat('gmres', true);
+            cpuMat.dg.params.full2D_gmresRestart = 20;
+            gpuMat.dg.params.full2D_gmresRestart = 20;
+
+            cpuDG = solve_transport_DG_full2D(cpuMat, cpuMat.V, 0.2, 0.1);
+            gpuDG = solve_transport_DG_full2D(gpuMat, gpuMat.V, 0.2, 0.1);
+
+            testCase.verifyTrue(gpuDG.info.solve.gpu.enabled);
+            testCase.verifyTrue(gpuDG.info.solve.gpu.matrixFreeOperator);
+            testCase.verifyEqual(gpuDG.info.solve.preconditioner.method, ...
+                'rowabs');
+            testCase.verifyClass(gpuDG.rho, 'double');
+            verifyRelativeSmall(testCase, gpuDG.rho-cpuDG.rho, ...
+                cpuDG.rho, 1e-6);
+        end
+
         function blockJacobiFallsBackForSingularRhoBlocks(testCase)
             mat = makeSmallMat();
             mat.dg.params.full2D_assembleDiffMatrix = false;
@@ -421,6 +489,19 @@ mat.dg.params.full2D_Q_diff_y = 0.7;
 mat.dg.params.full2D_Q_drift = 1;
 mat.dg.params.full2D_drift_scale = 1;
 mat.dg.params.full2D_cap_scale = 0.1;
+mat.dg.params.full2D_showSolverProgress = false;
+end
+
+function mat = makeGPUSolverMat(solverName, useGPU)
+mat = makeSmallMat();
+mat.dg.params.full2D_assembleDiffMatrix = false;
+mat.dg.params.full2D_assembleDriftMatrix = false;
+mat.dg.params.full2D_solve = true;
+mat.dg.params.full2D_solver = solverName;
+mat.dg.params.full2D_gpu = useGPU;
+mat.dg.params.full2D_preconditioner = 'rowabs';
+mat.dg.params.full2D_solverTol = 1e-9;
+mat.dg.params.full2D_solverMaxIt = 500;
 mat.dg.params.full2D_showSolverProgress = false;
 end
 

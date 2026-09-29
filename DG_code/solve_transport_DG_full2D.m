@@ -26,6 +26,12 @@ function DG = solve_transport_DG_full2D(mat, Vxy, EfL, EfR)
 %   (GUI waitbar in the MATLAB desktop, text otherwise), 'waitbar', 'text'
 %   or 'off'. The display is throttled by
 %   params.full2D_solverProgressUpdateSeconds (default 0.25 s).
+%
+% GPU execution:
+%   params.full2D_gpu = true runs BICGSTAB or GMRES with gpuArray data and
+%   a fully device-resident matrix-free operator. No automatic GPU check or
+%   device selection is performed. The selected/default MATLAB GPU is used,
+%   and the converged rho vector is gathered before observables are built.
 
 solverDir = fileparts(mfilename('fullpath'));
 addpath(fullfile(solverDir, 'core'));
@@ -108,6 +114,7 @@ nTotal = p.index.nTotal;
 mode = readParam(params, 'full2D_solve', 'auto');
 maxAutoSolveDof = readParam(params, 'full2D_maxAutoSolveDof', 1e7);
 maxMatrixFreeSolveDof = readParam(params, 'full2D_maxMatrixFreeSolveDof', 2e7);
+useGPU = readLogicalParam(params, 'full2D_gpu', false);
 
 rho = [];
 solveInfo = struct;
@@ -135,9 +142,20 @@ if isempty(A) && nTotal > maxMatrixFreeSolveDof
     return
 end
 
-solverName = chooseSolver(params, isempty(A), nTotal);
+solverName = chooseSolver(params, isempty(A), nTotal, useGPU);
 solveInfo.solver = solverName;
-preconditioner = buildPreconditioner(sysInfo, params, solverName, nTotal);
+solveInfo.gpu = struct( ...
+    'requested', useGPU, ...
+    'enabled', false, ...
+    'resultGathered', false, ...
+    'note', 'GPU setup has not been required for this solver path.');
+if useGPU && strcmp(solverName, 'direct')
+    error('DG:Full2D:GPUDirectSolverUnsupported', ...
+        ['full2D_gpu=true supports full2D_solver=''bicgstab'' or ', ...
+         '''gmres''. Select one of these matrix-free Krylov solvers.']);
+end
+preconditioner = buildPreconditioner(sysInfo, params, solverName, ...
+    nTotal, useGPU);
 solveInfo.preconditioner = preconditioner.info;
 
 if strcmp(solverName, 'direct') && isempty(A)
@@ -154,6 +172,13 @@ end
 if isempty(rhs)
     rhs = sysInfo.assembleRhs();
 end
+
+applyA = [];
+rhsSolve = rhs;
+if any(strcmp(solverName, {'bicgstab', 'gmres'}))
+    [applyA, rhsSolve, solveInfo.gpu] = prepareKrylovExecution( ...
+        sysInfo, rhs, useGPU);
+end
 %%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 switch solverName
@@ -168,9 +193,8 @@ switch solverName
         solveInfo.iterations = 1;
 
     case 'bicgstab'
-        applyA = @(u) sysInfo.apply(u);
         [rho, flag, relres, iter, resvec, progressInfo] = ...
-            runBicgstabWithProgress(applyA, rhs, preconditioner, ...
+            runBicgstabWithProgress(applyA, rhsSolve, preconditioner, ...
             solveInfo.tolerance, solveInfo.maxIterations, params, '');
         if shouldRetryBlockJacobiWithRowAbs(flag, preconditioner, params)
             firstAttempt = struct( ...
@@ -185,7 +209,7 @@ switch solverName
                 'retrying with row-absolute-sum scaling.'], flag));
             if preconditioner.enabled
                 [rho, flag, relres, iter, resvec, progressInfo] = ...
-                    runBicgstabWithProgress(applyA, rhs, preconditioner, ...
+                    runBicgstabWithProgress(applyA, rhsSolve, preconditioner, ...
                     solveInfo.tolerance, solveInfo.maxIterations, params, ...
                     'rowabs retry');
                 preconditioner.info.retryFrom = firstAttempt;
@@ -200,10 +224,16 @@ switch solverName
         solveInfo.progress = progressInfo;
 
     case 'gmres'
-        applyA = @(u) sysInfo.apply(u);
-        restart = readParam(params, 'full2D_gmresRestart', []);
+        if useGPU
+            restartDefault = readParam(params, ...
+                'full2D_gpuGmresRestart', 20);
+        else
+            restartDefault = [];
+        end
+        restart = readParam(params, 'full2D_gmresRestart', restartDefault);
+        solveInfo.gpu.gmresRestart = restart;
         [rho, flag, relres, iter, resvec, progressInfo] = ...
-            runGmresWithProgress(applyA, rhs, preconditioner, restart, ...
+            runGmresWithProgress(applyA, rhsSolve, preconditioner, restart, ...
             solveInfo.tolerance, solveInfo.maxIterations, nTotal, params);
         solveInfo.status = iterativeStatus('gmres', flag);
         solveInfo.flag = flag;
@@ -217,8 +247,48 @@ switch solverName
             'Unknown full2D_solver "%s". Use auto, direct, bicgstab or gmres.', ...
             solverName);
 end
+if useGPU && ~isempty(rho)
+    rho = gather(rho);
+    solveInfo.gpu.resultGathered = true;
+end
 solveInfo.preconditioner = preconditioner.info;
 end
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
+function [applyA, rhsSolve, info] = prepareKrylovExecution(sysInfo, rhs, useGPU)
+%PREPAREKRYLOVEXECUTION Place all iteration-resident data on CPU or GPU.
+if ~useGPU
+    applyA = @(u) sysInfo.apply(u);
+    rhsSolve = rhs;
+    info = struct( ...
+        'requested', false, ...
+        'enabled', false, ...
+        'resultGathered', false, ...
+        'matrixFreeOperator', true, ...
+        'note', 'Krylov operator and vectors remain on the CPU.');
+    return
+end
+
+if ~isfield(sysInfo, 'makeGPUApply') || isempty(sysInfo.makeGPUApply)
+    error('DG:Full2D:MissingGPUOperator', ...
+        'The Full-2D system does not expose makeGPUApply().');
+end
+
+% This intentionally performs no canUseGPU/gpuDevice query. gpuArray uses
+% the device selected by the user (or MATLAB's current default) and reports
+% the native MATLAB error if GPU support is unavailable.
+applyA = sysInfo.makeGPUApply();
+rhsSolve = gpuArray(rhs);
+info = struct( ...
+    'requested', true, ...
+    'enabled', true, ...
+    'resultGathered', false, ...
+    'matrixFreeOperator', true, ...
+    'underlyingClass', classUnderlying(rhsSolve), ...
+    'note', ['RHS, Krylov vectors, transport factors, drift diagonal and ', ...
+        'supported preconditioner data reside on the selected GPU.']);
+end
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%
 function [x, flag, relres, iter, resvec, progressInfo] = ...
@@ -249,6 +319,10 @@ else
         tolerance, maxIterations);
 end
 
+flag = gatherIfGPU(flag);
+relres = gatherIfGPU(relres);
+iter = gatherIfGPU(iter);
+resvec = gatherIfGPU(resvec);
 progress.finish(iter, resvec, flag, relres);
 progressInfo = progress.getInfo();
 clear cleanupProgress
@@ -282,6 +356,10 @@ else
         tolerance, maxIterations);
 end
 
+flag = gatherIfGPU(flag);
+relres = gatherIfGPU(relres);
+iter = gatherIfGPU(iter);
+resvec = gatherIfGPU(resvec);
 progress.finish(iter, resvec, flag, relres);
 progressInfo = progress.getInfo();
 clear cleanupProgress
@@ -532,7 +610,8 @@ end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%
-function preconditioner = buildPreconditioner(sysInfo, params, solverName, nTotal)
+function preconditioner = buildPreconditioner(sysInfo, params, solverName, ...
+        nTotal, useGPU)
 %BUILDPRECONDITIONER Build a matrix-free left preconditioner for Krylov.
 %
 % The basic Full-2D preconditioner is Jacobi:
@@ -565,6 +644,7 @@ preconditioner.info.method = 'none';
 preconditioner.info.enabled = false;
 preconditioner.info.nTotal = nTotal;
 preconditioner.info.maxStoredDof = maxDof;
+preconditioner.info.executionDevice = ternary(useGPU, 'gpu', 'cpu');
 
 if strcmp(solverName, 'direct')
     preconditioner.info.reason = 'Direct solver does not use a Krylov preconditioner.';
@@ -579,11 +659,22 @@ switch mode
         preconditioner = enableRowAbsPreconditioner(preconditioner, ...
             sysInfo, params, nTotal, ...
             'Using row-absolute-sum scaling requested by full2D_preconditioner.');
+        preconditioner = adaptPreconditionerForGPU(preconditioner, useGPU);
         return
     case {'blockjacobi', 'block-jacobi', 'rho-block-jacobi', ...
             'relative-block-jacobi', 'rho-blockjacobi'}
-        preconditioner = enableRelativeBlockJacobiPreconditioner( ...
-            preconditioner, sysInfo, params, nTotal);
+        if useGPU
+            preconditioner = enableRowAbsPreconditioner(preconditioner, ...
+                sysInfo, params, nTotal, ...
+                ['GPU execution currently replaces the LU-based rho ', ...
+                 'Block-Jacobi preconditioner by rowabs scaling.']);
+            preconditioner.info.gpuFallbackFrom = 'blockjacobi-rho';
+            preconditioner = adaptPreconditionerForGPU( ...
+                preconditioner, true);
+        else
+            preconditioner = enableRelativeBlockJacobiPreconditioner( ...
+                preconditioner, sysInfo, params, nTotal);
+        end
         return
     case {'auto', 'jacobi', 'diagonal'}
         useJacobi = strcmp(mode, 'jacobi') || strcmp(mode, 'diagonal') ...
@@ -631,11 +722,13 @@ if floorInfo.replacedEntries > 0 && fallbackOnSmallPivots
         'diagonalMinAbs', min(abs(diagonal)), ...
         'diagonalMaxAbs', max(abs(diagonal)), ...
         'floor', floorInfo);
+    preconditioner = adaptPreconditionerForGPU(preconditioner, useGPU);
     return
 end
 
 preconditioner.enabled = true;
 preconditioner.apply = @(r) inverseDiagonal.*r;
+preconditioner.vector = inverseDiagonal;
 preconditioner.info.method = 'jacobi';
 preconditioner.info.enabled = true;
 preconditioner.info.reason = ...
@@ -649,6 +742,7 @@ preconditioner.info.floor = floorInfo;
 preconditioner.info.note = ['Jacobi uses diag(A_diff)+diag(G_drift); it avoids ', ...
     'ILU-style global matrix assembly and is safe for the rho-basis ', ...
     'matrix-free path.'];
+preconditioner = adaptPreconditionerForGPU(preconditioner, useGPU);
 end
 
 function tf = shouldRetryBlockJacobiWithRowAbs(flag, preconditioner, params)
@@ -685,6 +779,7 @@ rowAbsSum = sysInfo.getRowAbsSum();
 
 preconditioner.enabled = true;
 preconditioner.apply = @(r) r./rowScale;
+preconditioner.vector = rowScale;
 preconditioner.info.method = 'rowabs';
 preconditioner.info.enabled = true;
 preconditioner.info.reason = reason;
@@ -697,6 +792,34 @@ preconditioner.info.floor = scaleInfo;
 preconditioner.info.note = ['Row-absolute-sum scaling approximates a ', ...
     'diagonal magnitude preconditioner without inverting zero diagonal ', ...
     'entries or assembling the full matrix.'];
+end
+
+function preconditioner = adaptPreconditionerForGPU(preconditioner, useGPU)
+%ADAPTPRECONDITIONERFORGPU Transfer diagonal scaling data exactly once.
+if ~useGPU || ~preconditioner.enabled
+    return
+end
+if ~isfield(preconditioner, 'vector') || isempty(preconditioner.vector)
+    error('DG:Full2D:UnsupportedGPUPreconditioner', ...
+        'Preconditioner "%s" has no GPU scaling representation.', ...
+        preconditioner.info.method);
+end
+
+gpuVector = gpuArray(preconditioner.vector);
+switch preconditioner.info.method
+    case 'jacobi'
+        preconditioner.apply = @(r) gpuVector.*r;
+    case 'rowabs'
+        preconditioner.apply = @(r) r./gpuVector;
+    otherwise
+        error('DG:Full2D:UnsupportedGPUPreconditioner', ...
+            ['Preconditioner "%s" is not supported on the GPU path. ', ...
+             'Use rowabs or jacobi.'], preconditioner.info.method);
+end
+preconditioner = rmfield(preconditioner, 'vector');
+preconditioner.info.executionDevice = 'gpu';
+preconditioner.info.note = [preconditioner.info.note, ...
+    ' Its scaling vector is stored on the selected GPU.'];
 end
 
 function preconditioner = enableRelativeBlockJacobiPreconditioner( ...
@@ -976,15 +1099,23 @@ else
 end
 end
 
-function solverName = chooseSolver(params, matrixFreeOnly, nTotal)
+function solverName = chooseSolver(params, matrixFreeOnly, nTotal, useGPU)
 solverName = lower(char(readParam(params, 'full2D_solver', 'auto')));
 if strcmp(solverName, 'auto')
     maxDirectSolveDof = readParam(params, 'full2D_maxDirectSolveDof', 150000);
-    if ~matrixFreeOnly && nTotal <= maxDirectSolveDof
+    if useGPU
+        solverName = 'bicgstab';
+    elseif ~matrixFreeOnly && nTotal <= maxDirectSolveDof
         solverName = 'direct';
     else
         solverName = 'bicgstab';
     end
+end
+end
+
+function value = gatherIfGPU(value)
+if isa(value, 'gpuArray')
+    value = gather(value);
 end
 end
 

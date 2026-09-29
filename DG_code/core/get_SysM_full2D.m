@@ -65,6 +65,7 @@ info.boundaryData = boundary;
 info.dofOrder = p.index.order;
 info.totalDofIfAssembled = p.index.nTotal;
 info.apply = @(u) applySystem(diffInfo, driftInfo, u);
+info.makeGPUApply = @() makeGPUSystemApply(diffInfo, driftInfo);
 info.assemble = @() assembleSystem(diffInfo, driftInfo);
 info.assembleRhs = @() diffInfo.assembleRhs();
 info.getDiagonal = @() getSystemDiagonal(diffInfo, driftInfo);
@@ -75,6 +76,18 @@ end
 function y = applySystem(diffInfo, driftInfo, u)
 %APPLYSYSTEM Matrix-free action of A_diff + G_drift.
 y = diffInfo.apply(u) + driftInfo.apply(u);
+end
+
+function applyGPU = makeGPUSystemApply(diffInfo, driftInfo)
+%MAKEGPUSYSTEMAPPLY Build one fully device-resident matrix-free operator.
+if ~isfield(diffInfo, 'makeGPUApply') || isempty(diffInfo.makeGPUApply) ...
+        || ~isfield(driftInfo, 'makeGPUApply') || isempty(driftInfo.makeGPUApply)
+    error('DG:Full2D:MissingGPUOperator', ...
+        'Diff and drift operators must both expose makeGPUApply().');
+end
+diffApplyGPU = diffInfo.makeGPUApply();
+driftApplyGPU = driftInfo.makeGPUApply();
+applyGPU = @(u) diffApplyGPU(u) + driftApplyGPU(u);
 end
 
 function A = assembleSystem(diffInfo, driftInfo)

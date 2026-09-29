@@ -85,6 +85,7 @@ if hasParam(params, 'rho_drift_scale') && ~hasParam(params, 'full2D_drift_scale'
     info.scale.legacyRhoDriftScaleIgnored = params.rho_drift_scale;
 end
 info.apply = @(u) applyDriftDiagonal(data, u);
+info.makeGPUApply = @() makeGPUDriftApply(data);
 info.getDiagonal = @() getDriftDiagonal(data);
 info.getRowAbsSum = @() abs(getDriftDiagonal(data));
 info.assemble = @() assembleDriftMatrix(data);
@@ -143,6 +144,25 @@ for first = 1:data.chunkSize:data.nTotal
     ids = (first:last).';
     y(ids) = driftDiagonalChunk(data, ids).*u(ids);
 end
+end
+
+function applyGPU = makeGPUDriftApply(data)
+%MAKEGPUDRIFTAPPLY Materialize and transfer the diagonal exactly once.
+%
+% griddedInterpolant is intentionally evaluated during setup on the CPU.
+% The Krylov loop then performs only the element-wise diagonal product on
+% the GPU and never calls the interpolant or transfers chunks per iteration.
+
+gpuDiagonal = gpuArray(getDriftDiagonal(data));
+applyGPU = @(u) applyStoredDriftDiagonal(gpuDiagonal, u, data.nTotal);
+end
+
+function y = applyStoredDriftDiagonal(diagonal, u, nTotal)
+if numel(u) ~= nTotal
+    error('DG:Full2D:InvalidDriftInput', ...
+        'Input has %d entries, expected %d.', numel(u), nTotal);
+end
+y = diagonal.*u(:);
 end
 
 function G = assembleDriftMatrix(data)
@@ -248,6 +268,10 @@ end
 end
 
 function tf = shouldAssembleDriftMatrix(params, nTotal)
+if readLogicalParam(params, 'full2D_gpu', false)
+    tf = false;
+    return
+end
 mode = readParam(params, 'full2D_assembleDriftMatrix', ...
     readParam(params, 'full2D_assembleSystemMatrix', 'auto'));
 tf = resolveBoolMode(mode, nTotal, readParam(params, ...
@@ -255,6 +279,12 @@ tf = resolveBoolMode(mode, nTotal, readParam(params, ...
 end
 
 function tf = shouldStoreDriftDiagonal(params, nTotal)
+if readLogicalParam(params, 'full2D_gpu', false)
+    % makeGPUDriftApply materializes a temporary host diagonal and captures
+    % only its device copy. Do not retain a second nTotal-sized CPU vector.
+    tf = false;
+    return
+end
 mode = readParam(params, 'full2D_storeDriftDiagonal', 'auto');
 tf = resolveBoolMode(mode, nTotal, readParam(params, ...
     'full2D_maxStoredDriftDiagonalDof', 2e7), ...
@@ -323,6 +353,17 @@ if isstruct(params)
             && isfield(params.full2D, name) && ~isempty(params.full2D.(name))
         value = params.full2D.(name);
     end
+end
+end
+
+function value = readLogicalParam(params, name, defaultValue)
+rawValue = readParam(params, name, defaultValue);
+if islogical(rawValue)
+    value = rawValue;
+elseif isnumeric(rawValue)
+    value = rawValue ~= 0;
+else
+    value = any(strcmpi(char(rawValue), {'true', 'yes', 'on', '1'}));
 end
 end
 

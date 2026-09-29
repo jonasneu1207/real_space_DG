@@ -138,6 +138,8 @@ info.operatorPartSummary = summarizeOperatorParts(operatorParts);
 info.rhsPartSummary = summarizeRhsParts(rhsParts);
 info.apply = @(u) applyKronOperator(operatorParts, u, ...
     p.dg.nCenterDof, p.relative.nDof);
+info.makeGPUApply = @() makeGPUKronApply(operatorParts, ...
+    p.dg.nCenterDof, p.relative.nDof);
 info.assemble = @() assembleKronOperator(operatorParts, ...
     p.dg.nCenterDof, p.relative.nDof);
 info.assembleRhs = @() assembleRhs(rhsParts, ...
@@ -509,15 +511,47 @@ if numel(u) ~= nCenter*nRelative
         'Input has %d entries, expected %d.', numel(u), nCenter*nRelative);
 end
 U = reshape(u, nRelative, nCenter);
-Y = zeros(nRelative, nCenter);
+Y = zeros(nRelative, nCenter, 'like', u);
 for ip = 1:numel(operatorParts)
     part = operatorParts{ip};
-    Y = Y + part.coefficient*(part.relativeMatrix*U*part.centerMatrix.');
+    relativeTimesU = part.relativeMatrix*U;
+    if isa(u, 'gpuArray')
+        % Sparse GPU multiplication is kept on the left. This evaluates
+        % (R*U)*C.' as (C*(R*U).').', avoiding a dense-times-sparse GPU
+        % product while preserving the rho-fast Kronecker action.
+        kronAction = (part.centerMatrix*relativeTimesU.').';
+    else
+        kronAction = relativeTimesU*part.centerMatrix.';
+    end
+    Y = Y + part.coefficient*kronAction;
 end
 y = Y(:);
 end
 
+function applyGPU = makeGPUKronApply(operatorParts, nCenter, nRelative)
+%MAKEGPUKRONAPPLY Transfer constant sparse factors to the selected GPU once.
+%
+% The returned function handle captures only GPU copies of the separable
+% center/relative matrices. Consequently, a Krylov iteration does not move
+% Kronecker factors between host and device.
+
+gpuParts = operatorParts;
+for ip = 1:numel(operatorParts)
+    gpuParts{ip}.centerMatrix = ...
+        gpuArray(operatorParts{ip}.centerMatrix);
+    gpuParts{ip}.relativeMatrix = ...
+        gpuArray(operatorParts{ip}.relativeMatrix);
+end
+applyGPU = @(u) applyKronOperator(gpuParts, u, nCenter, nRelative);
+end
+
 function tf = shouldAssembleMatrix(params, nTotal)
+if readLogicalParam(params, 'full2D_gpu', false)
+    % The GPU Krylov path always uses separable matrix-free factors. Avoid
+    % constructing an unused host-side global sparse matrix.
+    tf = false;
+    return
+end
 mode = readParam(params, 'full2D_assembleDiffMatrix', 'auto');
 maxDof = readParam(params, 'full2D_maxAssembledDof', 50000);
 if islogical(mode)
@@ -642,6 +676,17 @@ if isstruct(params)
             && isfield(params.full2D, name) && ~isempty(params.full2D.(name))
         value = params.full2D.(name);
     end
+end
+end
+
+function value = readLogicalParam(params, name, defaultValue)
+rawValue = readParam(params, name, defaultValue);
+if islogical(rawValue)
+    value = rawValue;
+elseif isnumeric(rawValue)
+    value = rawValue ~= 0;
+else
+    value = any(strcmpi(char(rawValue), {'true', 'yes', 'on', '1'}));
 end
 end
 

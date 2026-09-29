@@ -156,6 +156,8 @@ mat.dg.params.full2D = true;                                % true: full 2D Wign
 %mat.dg.params.full2D_solve = 'direct';
 
 mat.dg.params.full2D_solver = 'bicgstab';        % für echten Block-Jacobi aktuell robuster
+mat.dg.params.full2D_gpu = false;                % true: BICGSTAB/GMRES matrix-free auf der aktuell gewählten MATLAB-GPU
+mat.dg.params.full2D_gpuGmresRestart = 20;       % begrenzt die Anzahl gleichzeitig gespeicherter GMRES-Krylov-Vektoren auf der GPU
 mat.dg.params.full2D_maxDirectSolveDof = 160000;
 mat.dg.params.full2D_maxAssembledDof = 160000;
 mat.dg.params.full2D_preconditioner = 'rowabs';             % Preconditioner for BICGSTAB or GMRES when trying to solve huge systems via matrix-free operators
