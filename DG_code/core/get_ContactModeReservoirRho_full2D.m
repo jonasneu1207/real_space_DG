@@ -294,7 +294,7 @@ if ~integrateKz
 end
 
 nKz = readParam(params, 'full2D_contactMode_Nkz', ...
-    readParam(params, 'full2D_reservoir_Nkz', 401));
+    readParam(params, 'full2D_reservoir_Nkz', 1001));
 energyWindow = readParam(params, 'full2D_contactModeKzEnergyWindow', 0.3);
 nKz = max(2, round(nKz));
 mzRef = max(real(modeMassZ(:)));
