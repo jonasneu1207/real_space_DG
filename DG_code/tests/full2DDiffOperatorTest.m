@@ -106,6 +106,30 @@ classdef full2DDiffOperatorTest < matlab.unittest.TestCase
 
             testCase.verifyEqual(setup.info.apply(u), setup.A*u, AbsTol=1e-10);
         end
+
+        function yZeroInflowOmitsReflectionCorrections(testCase)
+            specular = buildYBoundarySetup('specular');
+            zeroInflow = buildYBoundarySetup('zero-inflow');
+            partNames = {zeroInflow.info.operatorPartSummary.name};
+
+            testCase.verifyEqual(zeroInflow.boundary.physical.YBottom.type, ...
+                'characteristic-zero-inflow');
+            testCase.verifyEqual(zeroInflow.boundary.physical.YTop.type, ...
+                'characteristic-zero-inflow');
+            testCase.verifyEqual(zeroInflow.info.yBoundaryType, 'zero-inflow');
+            testCase.verifyFalse(any(contains(partNames, ...
+                'specular reflection correction')));
+            testCase.verifyGreaterThan(norm(zeroInflow.A-specular.A, 'fro'), 0);
+        end
+
+        function specularRemainsDefaultYBoundary(testCase)
+            setup = buildDiffSetup('rusanov', true);
+            partNames = {setup.info.operatorPartSummary.name};
+
+            testCase.verifyEqual(setup.info.yBoundaryType, 'specular');
+            testCase.verifyTrue(any(contains(partNames, ...
+                'specular reflection correction')));
+        end
     end
 end
 
@@ -155,6 +179,23 @@ boundary = get_Boundary_full2D(mat, p, 0.2, 0.1, mat.V);
 
 setup = struct;
 setup.p = p;
+setup.A = A;
+setup.rhs = rhs;
+setup.info = info;
+end
+
+function setup = buildYBoundarySetup(yBoundaryType)
+mat = makeSmallDiffMat();
+mat.dg.params.full2D_Y_boundary = yBoundaryType;
+mat.dg.params.full2D_assembleDiffMatrix = true;
+p = initParams_full2D(mat, mat.V, 0.2, 0.1);
+[boundary, boundaryInfo] = get_Boundary_full2D(mat, p, 0.2, 0.1, mat.V);
+[A, rhs, info] = get_Diff_full2D(mat, p, boundary);
+
+setup = struct;
+setup.p = p;
+setup.boundary = boundary;
+setup.boundaryInfo = boundaryInfo;
 setup.A = A;
 setup.rhs = rhs;
 setup.info = info;

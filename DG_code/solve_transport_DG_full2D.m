@@ -56,6 +56,7 @@ DG.basis = 'rho-full2D';
 DG.flux = sysInfo.diff.fluxType;
 DG.fluxX = sysInfo.diff.fluxTypeX;
 DG.fluxY = sysInfo.diff.fluxTypeY;
+DG.yBoundaryType = sysInfo.diff.yBoundaryType;
 DG.coordinates = p.index.order;
 DG.centerDiscretization = p.centerDiscretization;
 DG.relativeDiscretization = p.relativeDiscretization;

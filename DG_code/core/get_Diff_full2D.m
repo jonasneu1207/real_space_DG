@@ -54,6 +54,7 @@ generalFluxType = readParam(params, 'full2D_fluxType', ...
     readParam(params, 'rho_flux', readParam(params, 'fluxType', 'rusanov')));
 xFluxType = normalizeGeneralFluxType(generalFluxType);
 yFluxType = normalizeYFluxType(readParam(params, 'full2D_Y_flux', xFluxType));
+yBoundaryType = get_YBoundaryType_full2D(mat);
 
 axisOpsX = oneDimensionalDGOperators(p.dg.X);
 axisOpsY = oneDimensionalDGOperators(p.dg.Y);
@@ -114,10 +115,15 @@ else
 end
 operatorParts = addOperatorPart(operatorParts, 'Y physical boundary characteristic penalty', ...
     scaleY, centerOps.Y.H2Boundary, relativeOps.Y.AabsChar);
-operatorParts = addYReflection(operatorParts, boundary.physical.YBottom, ...
-    centerOps.Y.bottomLift, relativeOps.Y.AplusChar, -scaleY);
-operatorParts = addYReflection(operatorParts, boundary.physical.YTop, ...
-    centerOps.Y.topLift, relativeOps.Y.AminusChar, scaleY);
+if strcmp(yBoundaryType, 'specular')
+    operatorParts = addYReflection(operatorParts, boundary.physical.YBottom, ...
+        centerOps.Y.bottomLift, relativeOps.Y.AplusChar, -scaleY);
+    operatorParts = addYReflection(operatorParts, boundary.physical.YTop, ...
+        centerOps.Y.topLift, relativeOps.Y.AminusChar, scaleY);
+end
+% With zero-inflow no correction is added. The characteristic boundary
+% penalty above then retains the outgoing interior characteristics and uses
+% zero for the incoming characteristics on both physical Y faces.
 
 assembleMatrix = shouldAssembleMatrix(params, p.index.nTotal);
 if assembleMatrix
@@ -138,6 +144,7 @@ info.fluxType = xFluxType;
 info.fluxTypeX = xFluxType;
 info.fluxTypeY = yFluxType;
 info.fluxTypeByAxis = struct('X', xFluxType, 'Y', yFluxType);
+info.yBoundaryType = yBoundaryType;
 info.dofOrder = p.index.order;
 info.totalDof = p.index.nTotal;
 info.centerDof = p.dg.nCenterDof;
@@ -150,6 +157,7 @@ info.boundary.sourceContactDof = boundary.physical.XLeft.nContactFaceDof;
 info.boundary.sourceClosedDof = boundary.physical.XLeft.nClosedFaceDof;
 info.boundary.drainContactDof = boundary.physical.XRight.nContactFaceDof;
 info.boundary.drainClosedDof = boundary.physical.XRight.nClosedFaceDof;
+info.boundary.yType = yBoundaryType;
 info.operatorPartSummary = summarizeOperatorParts(operatorParts);
 info.rhsPartSummary = summarizeRhsParts(rhsParts);
 info.apply = @(u) applyKronOperator(operatorParts, u, ...
