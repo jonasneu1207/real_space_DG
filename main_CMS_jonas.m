@@ -203,7 +203,7 @@ mat.dg.params.N_K_Y = mat.dg.params.N_K_chi;                % full2D: local DG n
 mat.dg.params.N_rho_x = mat.dg.params.N_xi/2;                 % full2D: FV cells in rho_x
 mat.dg.params.N_rho_y = mat.dg.params.N_xi/4;                 % full2D: FV cells in rho_y
 mat.dg.params.L_rho_x = mat.dg.params.Ly/2;                   % full2D: rho_x interval length
-mat.dg.params.L_rho_y = mat.dg.params.Ly/4;                   % full2D: rho_y interval length
+mat.dg.params.L_rho_y = mat.dg.params.Ly/16;                   % full2D: rho_y interval length
 
 mat.dg.params.N              = 80;   % Number of elements in k-direction
 
