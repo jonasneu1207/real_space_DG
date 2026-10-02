@@ -23,13 +23,15 @@ function [A, rhs, info] = get_Diff_full2D(mat, p, boundary)
 %
 % The volume and central numerical flux terms stay sparse because A_X and
 % A_Y are finite-volume derivative matrices in rho. Interior element faces
-% use the scalar Rusanov/Lax-Friedrichs approximation
+% use either the scalar Rusanov/Lax-Friedrichs approximation
 %
 %   |A_n| approx alphaLF * I,
 %
-% so the stabilizing face term also remains sparsity-friendly. Dense
-% characteristic splits are used only on physical boundary faces to impose
-% Source/Drain inflow and specular reflection cleanly.
+% or, in Y, the exact characteristic matrix |A_Y|. The latter is dense only
+% in the small one-dimensional rho_y factor and remains a separable
+% Kronecker operator in matrix-free mode. Characteristic splits are also
+% used on physical boundary faces to impose Source/Drain inflow and
+% specular reflection cleanly.
 
 if nargin == 1
     p = mat;
@@ -48,16 +50,15 @@ if isempty(boundary)
 end
 
 params = getDGParams(mat);
-fluxType = lower(readParam(params, 'full2D_fluxType', ...
-    readParam(params, 'rho_flux', readParam(params, 'fluxType', 'rusanov'))));
-if any(strcmpi(fluxType, {'lf', 'lax-friedrichs', 'rusanov-local'}))
-    fluxType = 'rusanov';
-end
+generalFluxType = readParam(params, 'full2D_fluxType', ...
+    readParam(params, 'rho_flux', readParam(params, 'fluxType', 'rusanov')));
+xFluxType = normalizeGeneralFluxType(generalFluxType);
+yFluxType = normalizeYFluxType(readParam(params, 'full2D_Y_flux', xFluxType));
 
 axisOpsX = oneDimensionalDGOperators(p.dg.X);
 axisOpsY = oneDimensionalDGOperators(p.dg.Y);
 centerOps = liftCenterOperators(p, axisOpsX, axisOpsY);
-relativeOps = relativeTransportOperators(p, params, fluxType);
+relativeOps = relativeTransportOperators(p, params, xFluxType, yFluxType);
 [scaleX, scaleY, scaleInfo] = transportScales(mat, p, params);
 
 operatorParts = {};
@@ -98,8 +99,19 @@ operatorParts = addOperatorPart(operatorParts, 'X physical boundary characterist
 % reflected with R_y.
 operatorParts = addOperatorPart(operatorParts, 'Y central rho transport', ...
     scaleY, centerOps.Y.H1, p.relative.Ay);
-operatorParts = addInteriorRusanovPart(operatorParts, 'Y interior Rusanov', ...
-    scaleY, centerOps.Y.H2Interior, relativeOps.Y.AabsLF, relativeOps.Y.betaLF);
+if strcmp(yFluxType, 'upwind')
+    % Exact characteristic upwind flux on every internal Y face:
+    %   F* = 0.5*A_Y*(rho_L+rho_R) ...
+    %        + 0.5*|A_Y|*(rho_L-rho_R).
+    % AabsChar acts only on rho_y (and as identity on rho_x), so the global
+    % operator remains separable and need not be assembled.
+    operatorParts = addOperatorPart(operatorParts, ...
+        'Y interior characteristic upwind', scaleY, ...
+        centerOps.Y.H2Interior, relativeOps.Y.AabsChar);
+else
+    operatorParts = addInteriorRusanovPart(operatorParts, 'Y interior Rusanov', ...
+        scaleY, centerOps.Y.H2Interior, relativeOps.Y.AabsLF, relativeOps.Y.betaLF);
+end
 operatorParts = addOperatorPart(operatorParts, 'Y physical boundary characteristic penalty', ...
     scaleY, centerOps.Y.H2Boundary, relativeOps.Y.AabsChar);
 operatorParts = addYReflection(operatorParts, boundary.physical.YBottom, ...
@@ -121,7 +133,11 @@ info.full2D = true;
 info.fullMatrixAssembled = assembleMatrix;
 info.matrixFreeAvailable = true;
 info.reason = matrixReason(assembleMatrix, params, p.index.nTotal);
-info.fluxType = fluxType;
+% Keep fluxType as the backwards-compatible name for the general/X flux.
+info.fluxType = xFluxType;
+info.fluxTypeX = xFluxType;
+info.fluxTypeY = yFluxType;
+info.fluxTypeByAxis = struct('X', xFluxType, 'Y', yFluxType);
 info.dofOrder = p.index.order;
 info.totalDof = p.index.nTotal;
 info.centerDof = p.dg.nCenterDof;
@@ -241,12 +257,13 @@ centerOps.Y.bottomLift = kron(axisOpsY.leftBoundary, IX);
 centerOps.Y.topLift = kron(axisOpsY.rightBoundary, IX);
 end
 
-function relativeOps = relativeTransportOperators(p, params, fluxType)
+function relativeOps = relativeTransportOperators(p, params, xFluxType, yFluxType)
 %RELATIVETRANSPORTOPERATORS Characteristic and Rusanov matrices in rho.
 %
 % A_X and A_Y themselves are sparse finite-volume derivative operators. The
-% characteristic splits A^+/A^- are only used on physical boundary faces.
-% Interior Rusanov stabilization uses betaLF*I instead of a dense |A|.
+% characteristic splits A^+/A^- are used on physical boundary faces and,
+% when requested, on every internal Y face. Interior Rusanov stabilization
+% uses betaLF*I instead of the exact characteristic |A|.
 
 tol = readParam(params, 'full2D_characteristicTol', 1e-12);
 IX = speye(p.relative.NrhoX);
@@ -257,17 +274,19 @@ IR = p.relative.identity;
 [AplusY1D, AminusY1D, lambdaY] = splitCharacteristicMatrix(p.relative.Ay1D, tol);
 
 thetaDefault = 0.01;
-if strcmpi(fluxType, 'central')
+if strcmp(xFluxType, 'central')
     thetaX = 0;
-    thetaY = 0;
-elseif strcmpi(fluxType, 'rusanov')
+else
     thetaX = readParam(params, 'full2D_thetaLF_X', ...
         readParam(params, 'full2D_thetaLF', readParam(params, 'thetaLF', thetaDefault)));
+end
+
+if strcmp(yFluxType, 'rusanov')
     thetaY = readParam(params, 'full2D_thetaLF_Y', ...
         readParam(params, 'full2D_thetaLF', readParam(params, 'thetaLF', thetaDefault)));
 else
-    error('DG:Full2D:UnknownFluxType', ...
-        'Unknown full2D_fluxType "%s". Use "rusanov" or "central".', fluxType);
+    % thetaLF is not part of either the central or exact upwind Y flux.
+    thetaY = 0;
 end
 
 alphaX = readParam(params, 'full2D_alphaLF_X', max(abs(lambdaX)));
@@ -289,6 +308,34 @@ relativeOps.Y.alphaLF = alphaY;
 relativeOps.Y.thetaLF = thetaY;
 relativeOps.Y.betaLF = thetaY*alphaY;
 relativeOps.Y.AabsLF = sparse(relativeOps.Y.betaLF*IR);
+end
+
+function fluxType = normalizeGeneralFluxType(value)
+%NORMALIZEGENERALFLUXTYPE Parse the general flux used by the X direction.
+fluxType = lower(strtrim(char(value)));
+if any(strcmp(fluxType, {'lf', 'lax-friedrichs', 'rusanov-local'}))
+    fluxType = 'rusanov';
+end
+if ~any(strcmp(fluxType, {'central', 'rusanov'}))
+    error('DG:Full2D:UnknownFluxType', ...
+        ['Unknown general Full-2D flux "%s". Use "rusanov" or "central". ', ...
+         'Select characteristic upwind in Y with full2D_Y_flux.'], fluxType);
+end
+end
+
+function fluxType = normalizeYFluxType(value)
+%NORMALIZEYFLUXTYPE Parse the optional Y-specific interior numerical flux.
+fluxType = lower(strtrim(char(value)));
+if any(strcmp(fluxType, {'lf', 'lax-friedrichs', 'rusanov-local'}))
+    fluxType = 'rusanov';
+elseif any(strcmp(fluxType, {'matrix-upwind', 'characteristic-upwind'}))
+    fluxType = 'upwind';
+end
+if ~any(strcmp(fluxType, {'central', 'rusanov', 'upwind'}))
+    error('DG:Full2D:UnknownYFluxType', ...
+        ['Unknown full2D_Y_flux "%s". Use "central", "rusanov", ', ...
+         'or "upwind".'], fluxType);
+end
 end
 
 function [operatorParts, rhsParts] = addSourceBoundary(operatorParts, rhsParts, ...

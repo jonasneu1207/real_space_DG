@@ -74,6 +74,38 @@ classdef full2DDiffOperatorTest < matlab.unittest.TestCase
             testCase.verifyGreaterThan( ...
                 norm(full(rhsByCenterColumn(:, setup.contactRows)), 'fro'), 0);
         end
+
+        function yUpwindOverridesCentralGeneralFlux(testCase)
+            central = buildDirectionalFluxSetup('central', 'central', true);
+            upwindY = buildDirectionalFluxSetup('central', 'upwind', true);
+            partNames = {upwindY.info.operatorPartSummary.name};
+
+            testCase.verifyEqual(upwindY.info.fluxTypeX, 'central');
+            testCase.verifyEqual(upwindY.info.fluxTypeY, 'upwind');
+            testCase.verifyEqual(upwindY.info.betaLF, [0, 0], AbsTol=1e-14);
+            testCase.verifyTrue(any(strcmp(partNames, ...
+                'Y interior characteristic upwind')));
+            testCase.verifyGreaterThan(norm(upwindY.A-central.A, 'fro'), 0);
+        end
+
+        function yCentralOverrideLeavesRusanovOnlyInX(testCase)
+            setup = buildDirectionalFluxSetup('rusanov', 'central', true);
+            partNames = {setup.info.operatorPartSummary.name};
+
+            testCase.verifyEqual(setup.info.fluxTypeX, 'rusanov');
+            testCase.verifyEqual(setup.info.fluxTypeY, 'central');
+            testCase.verifyGreaterThan(setup.info.betaLF(1), 0);
+            testCase.verifyEqual(setup.info.betaLF(2), 0, AbsTol=1e-14);
+            testCase.verifyTrue(any(strcmp(partNames, 'X interior Rusanov')));
+            testCase.verifyFalse(any(strcmp(partNames, 'Y interior Rusanov')));
+        end
+
+        function yUpwindMatrixFreeApplyMatchesAssembly(testCase)
+            setup = buildDirectionalFluxSetup('rusanov', 'upwind', true);
+            u = deterministicVector(setup.p.index.nTotal);
+
+            testCase.verifyEqual(setup.info.apply(u), setup.A*u, AbsTol=1e-10);
+        end
     end
 end
 
@@ -107,6 +139,22 @@ setup = struct;
 setup.mat = mat;
 setup.p = p;
 setup.boundary = boundary;
+setup.A = A;
+setup.rhs = rhs;
+setup.info = info;
+end
+
+function setup = buildDirectionalFluxSetup(generalFlux, yFlux, assembleMatrix)
+mat = makeSmallDiffMat();
+mat.dg.params.rho_flux = generalFlux;
+mat.dg.params.full2D_Y_flux = yFlux;
+mat.dg.params.full2D_assembleDiffMatrix = assembleMatrix;
+p = initParams_full2D(mat, mat.V, 0.2, 0.1);
+boundary = get_Boundary_full2D(mat, p, 0.2, 0.1, mat.V);
+[A, rhs, info] = get_Diff_full2D(mat, p, boundary);
+
+setup = struct;
+setup.p = p;
 setup.A = A;
 setup.rhs = rhs;
 setup.info = info;

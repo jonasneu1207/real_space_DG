@@ -168,8 +168,9 @@ mat.dg.params.full2D_drainContactMask  = true(mat.Ny,1);
 mat.dg.params.full2D_maxAutoSolveDof   = 2e7;
 mat.dg.params.full2D_thetaLF_Y = 0.01;
 mat.dg.params.full2D_thetaLF_X = 0.1;
+mat.dg.params.full2D_Y_flux = 'upwind';                    % full2D Y interior faces: 'upwind', 'rusanov' or 'central'; overrides rho_flux only in Y
 
-mat.dg.params.rho_flux = 'rusanov';                         % rho solver: 'central', legacy 'matrix-upwind', 'rusanov' or 'rusanov-boundary-upwind'
+mat.dg.params.rho_flux = 'rusanov';                         % general rho flux; in full2D this controls X when full2D_Y_flux is set
 mat.dg.params.rho_diff_scale = 1;
 mat.dg.params.rho_drift_scale = 1e9;
 
