@@ -170,6 +170,8 @@ mat.dg.params.full2D_thetaLF_Y = 0.01;
 mat.dg.params.full2D_thetaLF_X = 0.1;
 mat.dg.params.full2D_Y_flux = 'upwind';                    % full2D Y interior faces: 'upwind', 'rusanov' or 'central'; overrides rho_flux only in Y
 mat.dg.params.full2D_Y_boundary = 'zero-inflow';            % physical Y edges: 'zero-inflow' or 'specular'
+mat.dg.params.full2D_potentialDiscretization = 'fv-consistent'; % 'fv-consistent': 1D-rho-like FV stencil; 'collocated': legacy diagonal prototype
+mat.dg.params.full2D_potentialQuadratureOrder = 5;           % tensor-product Gauss-Lobatto points per X/Y DG element axis
 
 mat.dg.params.rho_flux = 'rusanov';                         % general rho flux; in full2D this controls X when full2D_Y_flux is set
 mat.dg.params.rho_diff_scale = 1;

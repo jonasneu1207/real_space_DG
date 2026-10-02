@@ -14,8 +14,9 @@ function [A, rhs, info] = get_SysM_full2D(mat, p, Vxy, EfL, EfR)
 % Implemented system split:
 %   Diff/transport: rectangular DG in X/Y with FV rho-operators and
 %                   Source/Drain/specular boundary fluxes.
-%   Drift/CAP:      diagonal rho-basis potential difference plus separable
-%                   relative-coordinate CAP.
+%   Drift/CAP:      FV-consistent sparse rho-basis potential blocks,
+%                   projected locally over rectangular X/Y DG elements,
+%                   plus a separable diagonal relative-coordinate CAP.
 %
 % For small systems this routine returns the assembled sparse matrix
 %
@@ -120,10 +121,10 @@ function blockData = getSystemRelativeBlockData(diffInfo, driftInfo)
 % DG DOF c. The Block-Jacobi preconditioner uses exactly these contiguous
 % rho-blocks:
 %
-%   B_c = A_diff(c,c in center space) + diag(G_drift(:,c)).
+%   B_c = A_diff(c,c in center space) + G_drift(c,c in center space).
 %
 % This keeps the preconditioner local in X/Y, but it retains the sparse
-% rho_x/rho_y transport coupling and the local diagonal potential/CAP term.
+% rho_x/rho_y transport coupling and the local sparse potential/CAP term.
 
 if ~isfield(diffInfo, 'getRelativeBlockData') ...
         || isempty(diffInfo.getRelativeBlockData)
@@ -132,28 +133,36 @@ if ~isfield(diffInfo, 'getRelativeBlockData') ...
 end
 
 diffBlockData = diffInfo.getRelativeBlockData();
-driftDiagonal = reshape(driftInfo.getDiagonal(), ...
-    diffBlockData.nRelative, diffBlockData.nCenter);
+if isfield(driftInfo, 'getRelativeBlockData') ...
+        && ~isempty(driftInfo.getRelativeBlockData)
+    driftBlockData = driftInfo.getRelativeBlockData();
+else
+    driftDiagonal = reshape(driftInfo.getDiagonal(), ...
+        diffBlockData.nRelative, diffBlockData.nCenter);
+    driftBlockData = struct;
+    driftBlockData.getBlock = @(centerId) spdiags( ...
+        driftDiagonal(:, centerId), 0, diffBlockData.nRelative, ...
+        diffBlockData.nRelative);
+end
 
 blockData = struct;
 blockData.nCenter = diffBlockData.nCenter;
 blockData.nRelative = diffBlockData.nRelative;
 blockData.nTotal = diffBlockData.nTotal;
 blockData.diff = diffBlockData;
-blockData.driftDiagonal = driftDiagonal;
+blockData.drift = driftBlockData;
 blockData.blockType = 'relative-rho-blocks-per-center-dof';
 blockData.dofOrder = {'rho_x', 'rho_y', 'X-DG-DOF', 'Y-DG-DOF'};
 blockData.note = ['System block c is the local rho_x/rho_y transport ', ...
-    'block plus the diagonal drift/CAP entries for center DOF c. ', ...
+    'block plus the sparse drift/CAP center block for center DOF c. ', ...
     'Off-block center-coordinate DG couplings remain in A, not in M.'];
 blockData.getBlock = @(centerId) systemRelativeBlock(diffBlockData, ...
-    driftDiagonal, centerId);
+    driftBlockData, centerId);
 end
 
-function block = systemRelativeBlock(diffBlockData, driftDiagonal, centerId)
-nRelative = diffBlockData.nRelative;
+function block = systemRelativeBlock(diffBlockData, driftBlockData, centerId)
 block = diffBlockData.getBlock(centerId) ...
-    + spdiags(driftDiagonal(:, centerId), 0, nRelative, nRelative);
+    + driftBlockData.getBlock(centerId);
 block = sparse(block);
 end
 

@@ -14,6 +14,7 @@ classdef full2DDriftSystemSolveTest < matlab.unittest.TestCase
     methods (Test)
         function driftIsSparseDiagonalAndMatrixFreeMatches(testCase)
             mat = makeSmallMat();
+            mat.dg.params.full2D_potentialDiscretization = 'collocated';
             mat.dg.params.full2D_assembleDriftMatrix = true;
             p = initParams_full2D(mat, mat.V, 0.2, 0.1);
 
@@ -28,8 +29,65 @@ classdef full2DDriftSystemSolveTest < matlab.unittest.TestCase
             testCase.verifyTrue(info.matrixFreeAvailable);
         end
 
+        function fvConsistentDriftIsSparseAndMatrixFreeMatches(testCase)
+            mat = makeSmallMat();
+            mat.dg.params.full2D_potentialDiscretization = 'fv-consistent';
+            mat.dg.params.full2D_assembleDriftMatrix = true;
+            p = initParams_full2D(mat, mat.V, 0.2, 0.1);
+
+            [G, info] = get_Drift_full2D(mat, p, mat.V);
+            u = deterministicVector(p.index.nTotal);
+            offDiagonal = G - spdiags(diag(G), 0, ...
+                p.index.nTotal, p.index.nTotal);
+
+            testCase.verifyTrue(issparse(G));
+            testCase.verifyGreaterThan(nnz(offDiagonal), 0);
+            verifyRelativeSmall(testCase, info.apply(u) - G*u, G*u, 1e-12);
+            testCase.verifyEqual(info.potentialDiscretization, ...
+                'fv-consistent');
+            testCase.verifyEqual(info.relativeStencil, ...
+                'tensor-product 3-by-3 FV neighborhood');
+        end
+
+        function fvConsistentConstantPotentialIsZeroWithoutCAP(testCase)
+            mat = makeSmallMat();
+            mat.V = 0.37*ones(mat.Nx, mat.Ny);
+            mat.dg.params.full2D_potentialDiscretization = 'fv-consistent';
+            mat.dg.params.full2D_cap_scale = 0;
+            mat.dg.params.full2D_assembleDriftMatrix = true;
+            p = initParams_full2D(mat, mat.V, 0.2, 0.1);
+
+            [G, info] = get_Drift_full2D(mat, p, mat.V);
+
+            testCase.verifyEqual(nnz(G), 0);
+            testCase.verifyEqual(info.getDiagonal(), ...
+                zeros(p.index.nTotal, 1), AbsTol=1e-13);
+        end
+
+        function fvConsistentRelativeBlockHasNinePointStencil(testCase)
+            mat = makeSmallMat();
+            mat.dg.params.full2D_potentialDiscretization = 'fv-consistent';
+            mat.dg.params.full2D_cap_scale = 0;
+            mat.dg.params.full2D_assembleDriftMatrix = false;
+            p = initParams_full2D(mat, mat.V, 0.2, 0.1);
+
+            [~, info] = get_Drift_full2D(mat, p, mat.V);
+            blockData = info.getRelativeBlockData();
+            block = blockData.getBlock(2);
+            [rows, cols] = find(block);
+            rowX = mod(rows-1, p.relative.NrhoX) + 1;
+            colX = mod(cols-1, p.relative.NrhoX) + 1;
+            rowY = floor((rows-1)/p.relative.NrhoX) + 1;
+            colY = floor((cols-1)/p.relative.NrhoX) + 1;
+
+            testCase.verifyGreaterThan(nnz(block-diag(diag(block))), 0);
+            testCase.verifyLessThanOrEqual(max(abs(rowX-colX)), 1);
+            testCase.verifyLessThanOrEqual(max(abs(rowY-colY)), 1);
+        end
+
         function zeroRelativeSeparationHasNoPotentialDifference(testCase)
             mat = makeSmallMat();
+            mat.dg.params.full2D_potentialDiscretization = 'collocated';
             mat.dg.params.full2D_assembleDriftMatrix = true;
             p = initParams_full2D(mat, mat.V, 0.2, 0.1);
 
@@ -73,6 +131,7 @@ classdef full2DDriftSystemSolveTest < matlab.unittest.TestCase
 
         function matrixFreeDriftCanSkipStoredDiagonal(testCase)
             mat = makeSmallMat();
+            mat.dg.params.full2D_potentialDiscretization = 'collocated';
             mat.dg.params.full2D_assembleDriftMatrix = false;
             mat.dg.params.full2D_storeDriftDiagonal = false;
             p = initParams_full2D(mat, mat.V, 0.2, 0.1);
@@ -368,6 +427,7 @@ classdef full2DDriftSystemSolveTest < matlab.unittest.TestCase
 
         function blockJacobiFallsBackForSingularRhoBlocks(testCase)
             mat = makeSmallMat();
+            mat.dg.params.full2D_potentialDiscretization = 'collocated';
             mat.dg.params.full2D_assembleDiffMatrix = false;
             mat.dg.params.full2D_assembleDriftMatrix = false;
             mat.dg.params.full2D_solve = true;
