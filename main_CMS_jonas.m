@@ -14,7 +14,7 @@ simulation = 'self-consistent';% 'transient', 'self-consistent'
 
 %mat.n_of_modes      = 3;   % 1,2,3,...
 % DEVICE PARAMETERS
-dx      = 0.25; %0,25 %Mind the following condition for DG: (Nx-1)/2 has to be even
+dx      = 0.50; %0,25 %Mind the following condition for DG: (Nx-1)/2 has to be even
 dy      = 0.25; %0,25
 dz      = 0.25;
 
@@ -42,7 +42,7 @@ if (strcmpi(device,'GAAFET')==true)
 elseif (strcmpi(device,'DGFET')==true)
     mat = buildDeviceCMS(device, dx,dy,w_ch,0.0,offsetL, offsetU,taper);
 elseif (strcmpi(device,'DGFET-type-I')==true)
-    mat = buildDevice(device);
+    mat = buildDevice(device, dx, dy);
 end
 
 warning('on')
@@ -156,13 +156,18 @@ mat.dg.params.full2D = true;                                % true: full 2D Wign
 %mat.dg.params.full2D_solve = 'direct';
 
 mat.dg.params.full2D_solver = 'bicgstab';        % für echten Block-Jacobi aktuell robuster
-mat.dg.params.full2D_gpu = false;                % true: BICGSTAB/GMRES matrix-free auf der aktuell gewählten MATLAB-GPU
+mat.dg.params.full2D_gpu = true;                % true: BICGSTAB/GMRES matrix-free auf der aktuell gewählten MATLAB-GPU
 mat.dg.params.full2D_gpuGmresRestart = 20;       % begrenzt die Anzahl gleichzeitig gespeicherter GMRES-Krylov-Vektoren auf der GPU
 mat.dg.params.full2D_maxDirectSolveDof = 160000;
 mat.dg.params.full2D_maxAssembledDof = 160000;
 mat.dg.params.full2D_preconditioner = 'rowabs';             % Preconditioner for BICGSTAB or GMRES when trying to solve huge systems via matrix-free operators
-mat.dg.params.full2D_reservoirModel = 'contact-modes';
-mat.dg.params.full2D_solverMaxIt = 600;
+mat.dg.params.full2D_reservoirModel = 'contact-modes';    % 'contact-modes' vs 'material-default'
+mat.dg.params.full2D_solverMaxIt = 2000;
+mat.dg.params.full2D_sourceContactMask = true(mat.Ny,1);
+mat.dg.params.full2D_drainContactMask  = true(mat.Ny,1);
+mat.dg.params.full2D_maxAutoSolveDof   = 2e7;
+mat.dg.params.full2D_thetaLF_Y = 0.01;
+mat.dg.params.full2D_thetaLF_X = 0.1;
 
 mat.dg.params.rho_flux = 'rusanov';                         % rho solver: 'central', legacy 'matrix-upwind', 'rusanov' or 'rusanov-boundary-upwind'
 mat.dg.params.rho_diff_scale = 1;

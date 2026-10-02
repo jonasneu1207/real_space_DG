@@ -1,4 +1,4 @@
-function mat = buildDevice(device)
+function mat = buildDevice(device, C_dx, C_dy)
 
 % dx = 0.5; % transport direction
 % dy = 0.5; % confinement direction
@@ -13,8 +13,8 @@ switch device
         mat.type = 'DGFET-type-I';
         %n_of_modes = mat.n_of_modes;      
 
-        dx = 0.5; % transport direction
-        dy = 0.5; % confinement direction
+        dx = C_dx; % transport direction
+        dy = C_dy; % confinement direction
 
         n_of_valleys = 1;  % number of valleys
         deg_factor = 1;    % degenarcy factor of the valley
