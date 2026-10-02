@@ -11,8 +11,8 @@ function DG = solve_transport_DG_full2D(mat, Vxy, EfL, EfR)
 %
 % This routine now builds the Full-2D stationary operator in rho basis:
 %   - sparse/Kronecker DG transport and boundary fluxes,
-%   - local diagonal potential difference in rho basis,
-%   - separable CAP on the outer relative-coordinate boundaries.
+%   - FV-consistent potential blocks in rho_x/rho_y and separable CAP on
+%     the outer relative-coordinate boundaries.
 %
 % Matrix policy:
 %   Small systems are assembled as sparse matrices and solved directly by
@@ -979,7 +979,7 @@ info.blockNnzMin = min(blockNnz);
 info.blockNnzMax = max(blockNnz);
 info.blockNnzMean = mean(blockNnz);
 info.note = ['B_c includes the local rho transport block and the local ', ...
-    'drift/CAP diagonal. Off-block X/Y DG couplings are omitted.'];
+    'sparse drift/CAP center block. Off-block X/Y DG couplings are omitted.'];
 end
 
 function value = ternary(condition, trueValue, falseValue)
