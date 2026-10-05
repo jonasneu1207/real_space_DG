@@ -53,7 +53,8 @@ nKx = readParam(params, 'full2D_contactMode_Nkx', ...
 cosX = cos(p.relative.rhoX.cells(:)*kx);
 
 integrateKz = shouldIntegrateKz(mat, params);
-kzInfo = makeKzInfo(params, modeMassZ, constants, integrateKz);
+kzInfo = makeKzInfo(params, modeMassZ, modeEnergy, Ef, temp, ...
+    constants, integrateKz);
 
 yFace = p.dg.Y.nodes(:);
 rhoBoundary = zeros(p.relative.nDof, numel(yFace));
@@ -281,7 +282,8 @@ defaultValue = isfield(mat, 'me_z') || isfield(mat, 'me_z_ch');
 tf = readLogicalParam(params, 'full2D_contactModeIntegrateKz', defaultValue);
 end
 
-function kzInfo = makeKzInfo(params, modeMassZ, constants, integrateKz)
+function kzInfo = makeKzInfo(params, modeMassZ, modeEnergy, Ef, temp, ...
+        constants, integrateKz)
 kzInfo = struct;
 kzInfo.integrate = integrateKz;
 kzInfo.k = 0;
@@ -295,16 +297,44 @@ end
 
 nKz = readParam(params, 'full2D_contactMode_Nkz', ...
     readParam(params, 'full2D_reservoir_Nkz', 1001));
-energyWindow = readParam(params, 'full2D_contactModeKzEnergyWindow', 0.3);
+minimumEnergyWindow = readParam(params, ...
+    'full2D_contactModeKzEnergyWindow', 0.3);
+thermalTailKBT = readParam(params, ...
+    'full2D_contactModeKzThermalTail', 10);
+
+validateattributes(minimumEnergyWindow, {'numeric'}, ...
+    {'real', 'finite', 'scalar', 'nonnegative'}, mfilename, ...
+    'full2D_contactModeKzEnergyWindow');
+validateattributes(thermalTailKBT, {'numeric'}, ...
+    {'real', 'finite', 'scalar', 'nonnegative'}, mfilename, ...
+    'full2D_contactModeKzThermalTail');
+
+% The transverse modes replace the explicit k_y integration, but k_z is
+% still a continuous reservoir coordinate. Its kinetic-energy interval must
+% extend beyond the occupied part of the lowest contact mode. A fixed cutoff
+% can otherwise truncate the Fermi sea when Ef-E_mode is comparable to the
+% configured window. Keep the user value as a lower bound and add a thermal
+% tail so the occupation at the numerical endpoint is exponentially small.
+thermalTailEV = thermalTailKBT*constants.kB*temp/constants.q;
+occupiedWindow = max(max(real(Ef(:))) - min(real(modeEnergy(:))), 0);
+adaptiveEnergyWindow = occupiedWindow + thermalTailEV;
+energyWindow = max(minimumEnergyWindow, adaptiveEnergyWindow);
+
 nKz = max(2, round(nKz));
 mzRef = max(real(modeMassZ(:)));
 kzMax = sqrt(max(energyWindow, eps)*2*mzRef*constants.q)/constants.hbar;
 kzInfo.k = linspace(0, kzMax, nKz);
 kzInfo.info.nKz = nKz;
 kzInfo.info.energyWindowEV = energyWindow;
+kzInfo.info.minimumEnergyWindowEV = minimumEnergyWindow;
+kzInfo.info.adaptiveEnergyWindowEV = adaptiveEnergyWindow;
+kzInfo.info.occupiedEnergyWindowEV = occupiedWindow;
+kzInfo.info.thermalTailEV = thermalTailEV;
+kzInfo.info.thermalTailKBT = thermalTailKBT;
 kzInfo.info.range = [0, kzMax];
 kzInfo.info.note = ['k_z is integrated assuming parabolic dispersion and ', ...
-    'translational invariance in the unmodeled width direction.'];
+    'translational invariance in the unmodeled width direction. The ', ...
+    'kinetic-energy cutoff is max(user minimum, Ef-min(E_mode)+thermal tail).'];
 end
 
 function [k, dk] = makeKGrid(nK, lengthValue)
