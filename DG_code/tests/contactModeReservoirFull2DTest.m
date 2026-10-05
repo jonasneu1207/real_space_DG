@@ -49,6 +49,32 @@ classdef contactModeReservoirFull2DTest < matlab.unittest.TestCase
                 ones(size(normalizedIntegral)), AbsTol=1e-10);
         end
 
+        function contactModeKzCutoffCoversOccupiedModesAndThermalTail(testCase)
+            mat = makeContactModeMat();
+            mat.dg.params.full2D_contactModeIntegrateKz = true;
+            mat.dg.params.full2D_contactMode_Nkz = 31;
+            mat.dg.params.full2D_contactModeKzEnergyWindow = 0.05;
+            mat.dg.params.full2D_contactModeKzThermalTail = 8;
+            Ef = 2.0;
+            p = initParams_full2D(mat, mat.V, Ef, Ef);
+
+            [~, info] = get_InflowBoundary_full2D(mat, p, Ef, Ef, mat.V);
+            reservoir = info.source.defaultReservoir;
+            kz = reservoir.kz;
+            thermalTailEV = 8*1.38064852e-23*mat.Temp/1.602176634e-19;
+            expectedAdaptiveWindow = max(Ef-min(reservoir.modeEnergy), 0) ...
+                + thermalTailEV;
+
+            testCase.verifyTrue(kz.integrate);
+            testCase.verifyEqual(kz.minimumEnergyWindowEV, 0.05);
+            testCase.verifyEqual(kz.adaptiveEnergyWindowEV, ...
+                expectedAdaptiveWindow, RelTol=1e-12);
+            testCase.verifyEqual(kz.energyWindowEV, ...
+                max(0.05, expectedAdaptiveWindow), RelTol=1e-12);
+            testCase.verifyEqual(kz.thermalTailKBT, 8);
+            testCase.verifyEqual(kz.nKz, 31);
+        end
+
         function contactModeReservoirDiffersFromMaterialDefault(testCase)
             contactMode = makeContactModeMat();
             materialDefault = contactMode;
