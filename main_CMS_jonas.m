@@ -168,6 +168,7 @@ mat.dg.params.full2D_drainContactMask  = true(mat.Ny,1);
 mat.dg.params.full2D_maxAutoSolveDof   = 2e7;
 mat.dg.params.full2D_thetaLF_Y = 0.01;
 mat.dg.params.full2D_thetaLF_X = 0.1;
+mat.dg.params.full2D_X_flux = 'upwind';                    % full2D X interior faces: 'upwind', 'rusanov' or 'central'; characteristic Source/Drain flux remains active for all choices
 mat.dg.params.full2D_Y_flux = 'upwind';                    % full2D Y interior faces: 'upwind', 'rusanov' or 'central'; overrides rho_flux only in Y
 mat.dg.params.full2D_Y_boundary = 'zero-inflow';            % physical Y edges: 'zero-inflow' or 'specular'
 mat.dg.params.full2D_potentialDiscretization = 'fv-consistent'; % 'fv-consistent': 1D-rho-like FV stencil; 'collocated': legacy diagonal prototype
@@ -203,7 +204,7 @@ mat.dg.params.Ly             = 160e-9;
 mat.dg.params.N_K_X = mat.dg.params.N_K_chi;                % full2D: local DG nodes in X on rectangular elements
 mat.dg.params.N_K_Y = mat.dg.params.N_K_chi;                % full2D: local DG nodes in Y on rectangular elements
 mat.dg.params.N_rho_x = mat.dg.params.N_xi/2;                 % full2D: FV cells in rho_x
-mat.dg.params.N_rho_y = mat.dg.params.N_xi/4;                 % full2D: FV cells in rho_y
+mat.dg.params.N_rho_y = mat.dg.params.N_xi/8;                 % full2D: FV cells in rho_y
 mat.dg.params.L_rho_x = mat.dg.params.Ly/2;                   % full2D: rho_x interval length
 mat.dg.params.L_rho_y = mat.dg.params.Ly/16;                   % full2D: rho_y interval length
 
