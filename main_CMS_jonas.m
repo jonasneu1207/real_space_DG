@@ -174,7 +174,7 @@ mat.dg.params.full2D_Y_boundary = 'zero-inflow';            % physical Y edges: 
 mat.dg.params.full2D_potentialDiscretization = 'fv-consistent'; % 'fv-consistent': 1D-rho-like FV stencil; 'collocated': legacy diagonal prototype
 mat.dg.params.full2D_potentialQuadratureOrder = 5;           % tensor-product Gauss-Lobatto points per X/Y DG element axis
 
-mat.dg.params.rho_flux = 'rusanov';                         % general rho flux; in full2D this controls X when full2D_Y_flux is set
+%mat.dg.params.rho_flux = 'rusanov';                         % general rho flux; in full2D this controls X when full2D_Y_flux is set
 mat.dg.params.rho_diff_scale = 1;
 mat.dg.params.rho_drift_scale = 1e9;
 
