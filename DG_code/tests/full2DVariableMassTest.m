@@ -45,6 +45,10 @@ classdef full2DVariableMassTest < matlab.unittest.TestCase
                 diff(setup.info.mass.X.relativeMassRange), 0);
             testCase.verifyGreaterThan( ...
                 diff(setup.info.mass.Y.relativeMassRange), 0);
+            testCase.verifyLessThanOrEqual( ...
+                setup.info.mass.X.endpointExchangeRelativeDefect, 1e-12);
+            testCase.verifyLessThanOrEqual( ...
+                setup.info.mass.Y.endpointExchangeRelativeDefect, 1e-12);
         end
 
         function diagonalAndRelativeBlockMatchAssembledMatrix(testCase)
@@ -73,6 +77,24 @@ classdef full2DVariableMassTest < matlab.unittest.TestCase
             testCase.verifyGreaterThanOrEqual(rowBound + tolerance, ...
                 exactRowAbs);
             testCase.verifyTrue(all(isfinite(rowBound)));
+        end
+
+        function massCorrectionIsWeightedSkewHermitian(testCase)
+            setup = buildVariableMassSetup();
+            correction = setup.A-setup.referenceA;
+            weightX = kron(setup.p.dg.X.jacobian(:), ...
+                setup.p.dg.X.w(:));
+            weightY = kron(setup.p.dg.Y.jacobian(:), ...
+                setup.p.dg.Y.w(:));
+            centerWeights = kron(weightY, weightX);
+            weights = kron(centerWeights, ...
+                ones(setup.p.relative.nDof, 1));
+            W = spdiags(weights, 0, setup.p.index.nTotal, ...
+                setup.p.index.nTotal);
+            weightedCorrection = W*correction;
+            defect = weightedCorrection + weightedCorrection';
+
+            verifyRelativeSmall(testCase, defect, weightedCorrection, 2e-12);
         end
 
         function systemBuilderSelectsVariableMassPath(testCase)
