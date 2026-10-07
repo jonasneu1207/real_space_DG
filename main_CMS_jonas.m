@@ -165,6 +165,10 @@ mat.dg.params.full2D_reservoirModel = 'contact-modes';    % 'contact-modes' vs '
 mat.dg.params.full2D_solverMaxIt = 2000;
 mat.dg.params.full2D_sourceContactMask = true(mat.Ny,1);
 mat.dg.params.full2D_drainContactMask  = true(mat.Ny,1);
+% mat.dg.params.full2D_sourceContactMask(end,1) = false;
+% mat.dg.params.full2D_drainContactMask(end,1)  = false;
+% mat.dg.params.full2D_sourceContactMask(1,1) = false;
+% mat.dg.params.full2D_drainContactMask(1,1)  = false;
 mat.dg.params.full2D_maxAutoSolveDof   = 2e7;
 mat.dg.params.full2D_thetaLF_Y = 0.01;
 mat.dg.params.full2D_thetaLF_X = 0.1;
@@ -204,9 +208,9 @@ mat.dg.params.Ly             = 160e-9;
 mat.dg.params.N_K_X = mat.dg.params.N_K_chi;                % full2D: local DG nodes in X on rectangular elements
 mat.dg.params.N_K_Y = mat.dg.params.N_K_chi;                % full2D: local DG nodes in Y on rectangular elements
 mat.dg.params.N_rho_x = mat.dg.params.N_xi/2;                 % full2D: FV cells in rho_x
-mat.dg.params.N_rho_y = mat.dg.params.N_xi/8;                 % full2D: FV cells in rho_y
+mat.dg.params.N_rho_y = 21; %mat.dg.params.N_xi/2;                 % full2D: FV cells in rho_y
 mat.dg.params.L_rho_x = mat.dg.params.Ly/2;                   % full2D: rho_x interval length
-mat.dg.params.L_rho_y = mat.dg.params.Ly/16;                   % full2D: rho_y interval length
+mat.dg.params.L_rho_y = mat.dg.params.Ly/16;                  % full2D: rho_y interval length
 
 mat.dg.params.N              = 80;   % Number of elements in k-direction
 
