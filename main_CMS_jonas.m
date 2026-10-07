@@ -178,6 +178,10 @@ mat.dg.params.full2D_Y_flux = 'upwind';                    % full2D Y interior f
 mat.dg.params.full2D_Y_boundary = 'zero-inflow';            % physical Y edges: 'zero-inflow' or 'specular'
 mat.dg.params.full2D_potentialDiscretization = 'fv-consistent'; % 'fv-consistent': 1D-rho-like FV stencil; 'collocated': legacy diagonal prototype
 mat.dg.params.full2D_potentialQuadratureOrder = 5;           % tensor-product Gauss-Lobatto points per X/Y DG element axis
+mat.dg.params.full2D_massModel = 'position-dependent';       % 'constant': previous scalar masses; 'position-dependent': endpoint BenDaniel-Duke/von-Neumann operator from mat.me_x/me_y
+% Optional scalar lead/reference masses for the characteristic contact flux:
+% mat.dg.params.full2D_referenceMassX = mat.me_x_ch;
+% mat.dg.params.full2D_referenceMassY = mat.me_y_ch;
 
 %mat.dg.params.rho_flux = 'rusanov';                         % general rho flux; in full2D this controls X when full2D_Y_flux is set
 mat.dg.params.rho_diff_scale = 1;

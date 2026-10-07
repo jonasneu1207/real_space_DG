@@ -290,7 +290,13 @@ massRelative = sanitizeRelativeMass(massRelative, defaultRelative);
 weights = quadratureWeights(gridY);
 weight = abs(modeVector).^2;
 weightSum = sum(weight.*weights, 1).';
-relativeMass = (weight.'*(weights.*massRelative(:)))./max(weightSum, eps);
+% For a spatially varying longitudinal mass the subband dispersion contains
+% <1/m>, not <m>. Thus the mode transport/DOS mass is the weighted harmonic
+% mass. This is consistent with the BenDaniel-Duke kinetic operator used by
+% the position-dependent Full-2D path.
+inverseRelativeMass = (weight.'*(weights./massRelative(:))) ...
+    ./max(weightSum, eps);
+relativeMass = 1./max(inverseRelativeMass, eps);
 massKg = sanitizeRelativeMass(relativeMass, defaultRelative)*constants.m0;
 end
 

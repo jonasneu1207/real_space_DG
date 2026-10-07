@@ -13,7 +13,9 @@ function [A, rhs, info] = get_SysM_full2D(mat, p, Vxy, EfL, EfR)
 %
 % Implemented system split:
 %   Diff/transport: rectangular DG in X/Y with FV rho-operators and
-%                   Source/Drain/specular boundary fluxes.
+%                   Source/Drain/specular boundary fluxes. The selectable
+%                   position-dependent-mass path uses the full endpoint
+%                   BenDaniel-Duke von-Neumann kinetic operator.
 %   Drift/CAP:      FV-consistent sparse rho-basis potential blocks,
 %                   projected locally over rectangular X/Y DG elements,
 %                   plus a separable diagonal relative-coordinate CAP.
@@ -37,7 +39,16 @@ if nargin < 3
 end
 
 [boundary, boundaryInfo] = get_Boundary_full2D(mat, p, EfL, EfR, Vxy);
-[A_diff, rhsDiff, diffInfo] = get_Diff_full2D(mat, p, boundary);
+params = getDGParams(mat);
+massModel = normalizeMassModel(readParam(params, ...
+    'full2D_massModel', 'constant'));
+switch massModel
+    case 'constant'
+        [A_diff, rhsDiff, diffInfo] = get_Diff_full2D(mat, p, boundary);
+    case 'position-dependent-bdd'
+        [A_diff, rhsDiff, diffInfo] = ...
+            get_Diff_variableMass_full2D(mat, p, boundary);
+end
 [G_drift, driftInfo] = get_Drift_full2D(mat, p, Vxy);
 
 fullMatrixAssembled = diffInfo.fullMatrixAssembled ...
@@ -53,6 +64,7 @@ end
 
 info = struct;
 info.full2D = true;
+info.massModel = massModel;
 info.fullMatrixAssembled = fullMatrixAssembled;
 info.matrixFreeAvailable = diffInfo.matrixFreeAvailable ...
     && driftInfo.matrixFreeAvailable;
@@ -72,6 +84,36 @@ info.assembleRhs = @() diffInfo.assembleRhs();
 info.getDiagonal = @() getSystemDiagonal(diffInfo, driftInfo);
 info.getRowAbsSum = @() getSystemRowAbsSum(diffInfo, driftInfo);
 info.getRelativeBlockData = @() getSystemRelativeBlockData(diffInfo, driftInfo);
+end
+
+function model = normalizeMassModel(value)
+model = lower(strrep(strtrim(char(value)), '_', '-'));
+switch model
+    case {'constant', 'scalar', 'legacy', 'reference'}
+        model = 'constant';
+    case {'position-dependent', 'spatial', 'variable', ...
+            'variable-mass', 'bdd', 'ben-daniel-duke', ...
+            'position-dependent-bdd'}
+        model = 'position-dependent-bdd';
+    otherwise
+        error('DG:Full2D:UnknownMassModel', ...
+            ['Unknown full2D_massModel "%s". Use "constant" or ', ...
+             '"position-dependent".'], char(value));
+end
+end
+
+function params = getDGParams(mat)
+params = struct;
+if isfield(mat, 'dg') && isfield(mat.dg, 'params')
+    params = mat.dg.params;
+end
+end
+
+function value = readParam(params, name, defaultValue)
+value = defaultValue;
+if isstruct(params) && isfield(params, name) && ~isempty(params.(name))
+    value = params.(name);
+end
 end
 
 function y = applySystem(diffInfo, driftInfo, u)

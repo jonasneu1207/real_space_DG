@@ -11,6 +11,8 @@ function DG = solve_transport_DG_full2D(mat, Vxy, EfL, EfR)
 %
 % This routine now builds the Full-2D stationary operator in rho basis:
 %   - sparse/Kronecker DG transport and boundary fluxes,
+%   - either the legacy scalar-mass transport or the endpoint
+%     BenDaniel-Duke operator selected by params.full2D_massModel,
 %   - FV-consistent potential blocks in rho_x/rho_y and separable CAP on
 %     the outer relative-coordinate boundaries.
 %
@@ -57,6 +59,7 @@ DG.flux = sysInfo.diff.fluxType;
 DG.fluxX = sysInfo.diff.fluxTypeX;
 DG.fluxY = sysInfo.diff.fluxTypeY;
 DG.yBoundaryType = sysInfo.diff.yBoundaryType;
+DG.massModel = sysInfo.massModel;
 DG.coordinates = p.index.order;
 DG.centerDiscretization = p.centerDiscretization;
 DG.relativeDiscretization = p.relativeDiscretization;

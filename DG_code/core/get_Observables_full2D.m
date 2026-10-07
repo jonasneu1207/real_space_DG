@@ -52,9 +52,9 @@ for ix = 1:numel(rhoXIds)
         + rhoXWeights(ix)*(rhoYDerivativeRow*rhoByCenter(relIds, :)).';
 end
 
-[scaleX, scaleY, currentScaleInfo] = currentScales(mat);
-jxDG = scaleX*imag(reshape(derivativeX, p.dg.X.nDof, p.dg.Y.nDof));
-jyDG = scaleY*imag(reshape(derivativeY, p.dg.X.nDof, p.dg.Y.nDof));
+[scaleX, scaleY, currentScaleInfo] = currentScales(mat, p);
+jxDG = scaleX.*imag(reshape(derivativeX, p.dg.X.nDof, p.dg.Y.nDof));
+jyDG = scaleY.*imag(reshape(derivativeY, p.dg.X.nDof, p.dg.Y.nDof));
 
 [n, targetY, projectionInfo] = projectToMaterialY(nDG, p, mat);
 jx = projectValuesToY(jxDG, p.dg.Y.nodes(:), targetY);
@@ -176,21 +176,117 @@ else
 end
 end
 
-function [scaleX, scaleY, info] = currentScales(mat)
+function [scaleX, scaleY, info] = currentScales(mat, p)
 constants = physicalConstants;
-massX = massToKg(readField(mat, 'me_x_ch', 0.041));
-massY = massToKg(readField(mat, 'me_y_ch', readField(mat, 'me_x_ch', 0.041)));
-scaleX = constants.q*constants.hbar/massX;
-scaleY = constants.q*constants.hbar/massY;
+params = getDGParams(mat);
+massModel = lower(strrep(char(readParam(params, ...
+    'full2D_massModel', 'constant')), '_', '-'));
+
+if any(strcmp(massModel, {'position-dependent', 'spatial', 'variable', ...
+        'variable-mass', 'bdd', 'ben-daniel-duke', ...
+        'position-dependent-bdd'}))
+    inverseMassX = inverseMassOnDGGrid(mat, p, 'x', ...
+        readField(mat, 'me_x_ch', 0.041));
+    inverseMassY = inverseMassOnDGGrid(mat, p, 'y', ...
+        readField(mat, 'me_y_ch', readField(mat, 'me_x_ch', 0.041)));
+    scaleX = constants.q*constants.hbar/constants.m0*inverseMassX;
+    scaleY = constants.q*constants.hbar/constants.m0*inverseMassY;
+    resolvedModel = 'position-dependent-bdd';
+else
+    massX = massToKg(readField(mat, 'me_x_ch', 0.041));
+    massY = massToKg(readField(mat, 'me_y_ch', ...
+        readField(mat, 'me_x_ch', 0.041)));
+    scaleX = constants.q*constants.hbar/massX;
+    scaleY = constants.q*constants.hbar/massY;
+    inverseMassX = constants.m0/massX;
+    inverseMassY = constants.m0/massY;
+    resolvedModel = 'constant';
+end
 
 info = struct;
-info.scaleX = scaleX;
-info.scaleY = scaleY;
-info.massXKg = massX;
-info.massYKg = massY;
-info.note = ['Current extraction currently uses scalar channel masses. ', ...
-    'Spatially varying mass can be added later by evaluating mass on the ', ...
-    'rectangular DG center grid.'];
+info.massModel = resolvedModel;
+info.scaleXRange = [min(scaleX, [], 'all'), max(scaleX, [], 'all')];
+info.scaleYRange = [min(scaleY, [], 'all'), max(scaleY, [], 'all')];
+info.inverseRelativeMassXRange = [min(inverseMassX, [], 'all'), ...
+    max(inverseMassX, [], 'all')];
+info.inverseRelativeMassYRange = [min(inverseMassY, [], 'all'), ...
+    max(inverseMassY, [], 'all')];
+info.note = ['For position-dependent masses, j_x and j_y use ', ...
+    'q*hbar/m_x(X,Y) and q*hbar/m_y(X,Y) on the DG center grid.'];
+end
+
+function inverseMass = inverseMassOnDGGrid(mat, p, axisName, defaultMass)
+fieldName = ['me_', axisName];
+mass = massFieldToXY(readField(mat, fieldName, defaultMass), ...
+    mat, defaultMass);
+constants = physicalConstants;
+kgMask = abs(mass) < 1e-25;
+mass(kgMask) = mass(kgMask)/constants.m0;
+if any(~isfinite(mass), 'all') || any(mass <= 0, 'all')
+    error('DG:Full2D:InvalidObservableMass', ...
+        '%s must contain finite positive masses.', fieldName);
+end
+
+gridX = coordinateVector(mat, 'x', 'dx', 'Nx')*p.coordinateScale;
+gridY = coordinateVector(mat, 'y', 'dy', 'Ny')*p.coordinateScale;
+[gridX, ix] = sort(gridX(:));
+[gridY, iy] = sort(gridY(:));
+inverseField = 1./mass(ix, iy);
+interpolant = griddedInterpolant({gridX, gridY}, inverseField, ...
+    'linear', 'nearest');
+[X, Y] = ndgrid(p.dg.X.nodes(:), p.dg.Y.nodes(:));
+inverseMass = interpolant(X, Y);
+end
+
+function field = massFieldToXY(field, mat, defaultValue)
+if isempty(field)
+    field = defaultValue;
+end
+if isscalar(field)
+    field = repmat(field, mat.Nx, mat.Ny);
+    return
+end
+if ~ismatrix(field)
+    fieldSize = size(field);
+    if fieldSize(end-1) ~= mat.Nx || fieldSize(end) ~= mat.Ny
+        error('DG:Full2D:InvalidObservableMassSize', ...
+            'Mass array must end in dimensions Nx-by-Ny.');
+    end
+    field = reshape(field, [], mat.Nx, mat.Ny);
+    field = squeeze(field(1, :, :));
+else
+    field = squeeze(field);
+end
+if isequal(size(field), [mat.Nx, mat.Ny])
+    % Already in the material-grid convention field(X,Y).
+elseif isequal(size(field), [mat.Ny, mat.Nx])
+    field = field.';
+else
+    error('DG:Full2D:InvalidObservableMassSize', ...
+        'Mass field must have size Nx-by-Ny.');
+end
+end
+
+function coord = coordinateVector(mat, name, spacingName, countName)
+if isfield(mat, name) && ~isempty(mat.(name))
+    coord = mat.(name)(:);
+else
+    coord = (0:mat.(countName)-1).'*mat.(spacingName);
+end
+end
+
+function params = getDGParams(mat)
+params = struct;
+if isfield(mat, 'dg') && isfield(mat.dg, 'params')
+    params = mat.dg.params;
+end
+end
+
+function value = readParam(params, name, defaultValue)
+value = defaultValue;
+if isstruct(params) && isfield(params, name) && ~isempty(params.(name))
+    value = params.(name);
+end
 end
 
 function massKg = massToKg(massValue)
