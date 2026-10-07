@@ -44,7 +44,8 @@ side.type = 'characteristic-inflow';
 side.face = face;
 side.reservoir = reservoir;
 side.normal = normal;
-side.fermiLevel = Ef;
+side.fermiLevelInput = Ef;
+side.fermiLevel = usedFermiLevel(dataInfo, Ef);
 side.normalFlux = normalFlux;
 side.rhoBoundary = rhoBoundary;
 side.centerDofs = centerDofs(:);
@@ -59,6 +60,17 @@ side.nonContactNote = ...
     'Masked X-face DOFs do not receive reservoir inflow; incoming data are reflected with rho_x -> -rho_x.';
 side.inflowComponents = nnz(normalFlux.inflowMask);
 side.outflowComponents = nnz(normalFlux.outflowMask);
+end
+
+function EfUsed = usedFermiLevel(dataInfo, EfInput)
+EfUsed = EfInput;
+if isstruct(dataInfo) && isfield(dataInfo, 'defaultReservoir') ...
+        && isstruct(dataInfo.defaultReservoir) ...
+        && isfield(dataInfo.defaultReservoir, 'fermiLevelUsed') ...
+        && isscalar(dataInfo.defaultReservoir.fermiLevelUsed) ...
+        && isfinite(dataInfo.defaultReservoir.fermiLevelUsed)
+    EfUsed = dataInfo.defaultReservoir.fermiLevelUsed;
+end
 end
 
 function [rhoBoundary, dataInfo] = getBoundaryRhoData(mat, p, sideName, nFaceDof, Ef, Vxy)

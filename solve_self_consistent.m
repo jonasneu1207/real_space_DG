@@ -37,6 +37,16 @@ mat.Np      = N_chi*N_K_chi;
 
 [Ef0_L, Ef0_R] = solve_fermi(Esub, mat);
 
+% For the Full-2D contact-mode path, use the same newly calculated contact
+% modes both for the equilibrium Fermi level and for the later reservoir
+% density matrix. The legacy Mode-Space values above only serve as robust
+% guesses/fallbacks and remain unchanged for every other transport solver.
+contactFermiInfo = [];
+if strcmpi(solver, 'DG') && usesFull2DContactModeFermi(mat)
+    [Ef0_L, Ef0_R, contactFermiInfo] = ...
+        solve_fermi_contactModes_full2D(mat, mat.V, Ef0_L, Ef0_R);
+end
+
 % if mat.Tau ~= 0
 %     mat.Vg=mat.deltav;
 % else
@@ -512,3 +522,37 @@ results.n_total = n_total;
 results.j_total = j_total;
 results.V_total = V_total;
 results.Ef0=Ef0_L;
+if ~isempty(contactFermiInfo)
+    results.full2DContactFermi = contactFermiInfo;
+end
+
+end
+
+function tf = usesFull2DContactModeFermi(mat)
+tf = false;
+if ~isfield(mat, 'dg') || ~isfield(mat.dg, 'params')
+    return
+end
+params = mat.dg.params;
+if ~isfield(params, 'full2D') || ~isscalar(params.full2D) ...
+        || ~logical(params.full2D)
+    return
+end
+
+reservoirModel = 'material-default';
+if isfield(params, 'full2D_reservoirModel') ...
+        && ~isempty(params.full2D_reservoirModel)
+    reservoirModel = lower(strrep(char(params.full2D_reservoirModel), '_', '-'));
+end
+fermiModel = 'contact-neutrality';
+if isfield(params, 'full2D_contactModeFermiModel') ...
+        && ~isempty(params.full2D_contactModeFermiModel)
+    fermiModel = lower(strrep(char(params.full2D_contactModeFermiModel), '_', '-'));
+end
+
+isContactReservoir = any(strcmp(reservoirModel, ...
+    {'contact-mode', 'contact-modes', 'modes', 'transverse-modes'}));
+isNeutralityModel = any(strcmp(fermiModel, ...
+    {'contact', 'contact-modes', 'neutrality', 'contact-neutrality', 'solve'}));
+tf = isContactReservoir && isNeutralityModel;
+end

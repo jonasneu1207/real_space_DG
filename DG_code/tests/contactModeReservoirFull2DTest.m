@@ -75,6 +75,78 @@ classdef contactModeReservoirFull2DTest < matlab.unittest.TestCase
             testCase.verifyEqual(kz.nKz, 31);
         end
 
+        function contactModeFermiLevelIsSolvedFromContactNeutrality(testCase)
+            mat = makeContactModeMat();
+            mat.N_s = 2e18;
+            mat.N_d = 2e18;
+            mat.W_c = 4;
+            mat.dg.params.full2D_contactModeIntegrateKz = true;
+            mat.dg.params.full2D_contactMode_Nkz = 101;
+            mat.dg.params.full2D_contactModeFermiModel = 'contact-neutrality';
+            inputEfL = 5.0;
+            inputEfR = -2.0;
+            p = initParams_full2D(mat, mat.V, inputEfL, inputEfR);
+
+            [inflow, info] = get_InflowBoundary_full2D( ...
+                mat, p, inputEfL, inputEfR, mat.V);
+            source = info.source.defaultReservoir;
+            drain = info.drain.defaultReservoir;
+            expectedTarget = mat.N_s*1e6*mat.W_c*1e-9;
+
+            testCase.verifyEqual(source.fermiLevel.model, 'contact-neutrality');
+            testCase.verifyEqual(source.fermiLevel.targetSheetDensityM2, ...
+                expectedTarget, RelTol=1e-14);
+            testCase.verifyLessThan(source.fermiLevel.relativeResidual, 1e-9);
+            testCase.verifyLessThan(drain.fermiLevel.relativeResidual, 1e-9);
+            testCase.verifyNotEqual(source.fermiLevelUsed, inputEfL);
+            testCase.verifyNotEqual(drain.fermiLevelUsed, inputEfR);
+            testCase.verifyEqual(source.fermiLevelUsed, ...
+                drain.fermiLevelUsed, AbsTol=1e-10);
+            testCase.verifyEqual(inflow.source.fermiLevel, ...
+                source.fermiLevelUsed, AbsTol=1e-14);
+            testCase.verifyEqual(inflow.drain.fermiLevel, ...
+                drain.fermiLevelUsed, AbsTol=1e-14);
+        end
+
+        function externalContactModeFermiLevelRemainsSelectable(testCase)
+            mat = makeContactModeMat();
+            mat.N_s = 2e18;
+            mat.N_d = 2e18;
+            mat.W_c = 4;
+            mat.dg.params.full2D_contactModeIntegrateKz = true;
+            mat.dg.params.full2D_contactMode_Nkz = 31;
+            mat.dg.params.full2D_contactModeFermiModel = 'external';
+            Ef = 1.25;
+            p = initParams_full2D(mat, mat.V, Ef, Ef);
+
+            [inflow, info] = get_InflowBoundary_full2D(mat, p, Ef, Ef, mat.V);
+
+            testCase.verifyEqual( ...
+                info.source.defaultReservoir.fermiLevel.model, 'external');
+            testCase.verifyEqual(inflow.source.fermiLevel, Ef);
+            testCase.verifyEqual( ...
+                info.source.defaultReservoir.fermiLevelUsed, Ef);
+        end
+
+        function equilibriumContactFermiHelperUsesSameModeModel(testCase)
+            mat = makeContactModeMat();
+            mat.N_s = 2e18;
+            mat.N_d = 2e18;
+            mat.W_c = 4;
+            mat.dg.params.full2D_contactModeIntegrateKz = true;
+            mat.dg.params.full2D_contactMode_Nkz = 31;
+            mat.dg.params.full2D_contactModeFermiModel = 'contact-neutrality';
+
+            [EfL, EfR, info] = solve_fermi_contactModes_full2D( ...
+                mat, mat.V, 5.0, -2.0);
+
+            testCase.verifyEqual(EfL, info.source.usedEV, AbsTol=1e-14);
+            testCase.verifyEqual(EfR, info.drain.usedEV, AbsTol=1e-14);
+            testCase.verifyEqual(EfL, EfR, AbsTol=1e-10);
+            testCase.verifyTrue(info.source.converged);
+            testCase.verifyTrue(info.drain.converged);
+        end
+
         function contactModeReservoirDiffersFromMaterialDefault(testCase)
             contactMode = makeContactModeMat();
             materialDefault = contactMode;

@@ -162,6 +162,7 @@ mat.dg.params.full2D_maxDirectSolveDof = 160000;
 mat.dg.params.full2D_maxAssembledDof = 160000;
 mat.dg.params.full2D_preconditioner = 'rowabs';             % Preconditioner for BICGSTAB or GMRES when trying to solve huge systems via matrix-free operators
 mat.dg.params.full2D_reservoirModel = 'contact-modes';    % 'contact-modes' vs 'material-default'
+mat.dg.params.full2D_contactModeFermiModel = 'contact-neutrality'; % solve Ef from the same contact modes and contact doping; 'external' uses supplied EfL/EfR
 mat.dg.params.full2D_solverMaxIt = 2000;
 mat.dg.params.full2D_sourceContactMask = true(mat.Ny,1);
 mat.dg.params.full2D_drainContactMask  = true(mat.Ny,1);

@@ -16,6 +16,9 @@ function [rhoBoundary, info] = get_ContactModeReservoirRho_full2D(mat, p, sideNa
 % distribution for the same transverse mode. This deliberately keeps the
 % current Full-2D implementation parabolic; a future non-parabolic model can
 % replace only the longitudinal occupation and characteristic classification.
+% By default the Fermi level is obtained from charge neutrality using these
+% same contact modes and their mode-averaged x/z masses. The externally
+% supplied Ef is retained as an optional legacy/fallback value.
 %
 % Relative-vector order follows the rest of the Full-2D code:
 %   rho_x is fastest, then rho_y. The returned array therefore has size
@@ -26,12 +29,6 @@ if nargin < 5 || isempty(Vxy)
 end
 
 params = getDGParams(mat);
-if isempty(Ef) || any(~isfinite(Ef(:)))
-    [rhoBoundary, info] = zeroReservoir(p, sideName, ...
-        'No finite reservoir Fermi level was supplied.');
-    return
-end
-
 constants = physicalConstants;
 temp = readField(mat, 'Temp', 300);
 degFactor = readDegeneracy(mat);
@@ -53,8 +50,31 @@ nKx = readParam(params, 'full2D_contactMode_Nkx', ...
 cosX = cos(p.relative.rhoX.cells(:)*kx);
 
 integrateKz = shouldIntegrateKz(mat, params);
-kzInfo = makeKzInfo(params, modeMassZ, modeEnergy, Ef, temp, ...
+[EfUsed, fermiLevelInfo] = resolveContactFermiLevel(mat, p, params, ...
+    sideName, Ef, modeEnergy, modeMassX, modeMassZ, temp, degFactor, ...
     constants, integrateKz);
+if isempty(EfUsed) || ~isscalar(EfUsed) || ~isfinite(EfUsed)
+    [rhoBoundary, info] = zeroReservoir(p, sideName, ...
+        'No finite contact-mode reservoir Fermi level could be determined.');
+    info.fermiLevel = fermiLevelInfo;
+    return
+end
+
+kzInfo = makeKzInfo(params, modeMassZ, modeEnergy, EfUsed, temp, ...
+    constants, integrateKz);
+[quadratureDensity, quadratureDensityByMode] = contactQuadratureDensity( ...
+    kx, dkx, modeEnergy, modeMassX, modeMassZ, EfUsed, temp, degFactor, ...
+    constants, kzInfo);
+fermiLevelInfo.quadratureSheetDensity = quadratureDensity;
+fermiLevelInfo.quadratureSheetDensityByMode = quadratureDensityByMode;
+if integrateKz && isfinite(fermiLevelInfo.targetSheetDensityM2) ...
+        && fermiLevelInfo.targetSheetDensityM2 > 0
+    fermiLevelInfo.quadratureRelativeResidual = ...
+        abs(quadratureDensity-fermiLevelInfo.targetSheetDensityM2) ...
+        /fermiLevelInfo.targetSheetDensityM2;
+else
+    fermiLevelInfo.quadratureRelativeResidual = NaN;
+end
 
 yFace = p.dg.Y.nodes(:);
 rhoBoundary = zeros(p.relative.nDof, numel(yFace));
@@ -63,7 +83,7 @@ transverseNormByMode = zeros(nModes, 1);
 
 for im = 1:nModes
     rhoXMode = transformLongitudinalMode(cosX, kx, dkx, modeEnergy(im), ...
-        modeMassX(im), modeMassZ(im), Ef, temp, degFactor, constants, kzInfo);
+        modeMassX(im), modeMassZ(im), EfUsed, temp, degFactor, constants, kzInfo);
     rhoYMode = transverseModeDensity(modeVector(:, im), ...
         contact.gridY, yFace, p.relative.rhoY.cells(:));
 
@@ -94,6 +114,9 @@ info.dkx = dkx;
 info.kz = kzInfo.info;
 info.temperature = temp;
 info.degeneracy = degFactor;
+info.fermiLevelInput = scalarOrNaN(Ef);
+info.fermiLevelUsed = EfUsed;
+info.fermiLevel = fermiLevelInfo;
 info.size = size(rhoBoundary);
 info.note = ['Source/Drain data are built from transverse contact modes ', ...
     'phi_n(y) and their density matrix phi_n(Y+rho_y/2)phi_n^*(Y-rho_y/2). ', ...
@@ -214,6 +237,13 @@ end
 
 function rhoXMode = transformLongitudinalMode(cosX, kx, dkx, modeEnergy, ...
         massX, massZ, Ef, temp, degFactor, constants, kzInfo)
+fKx = longitudinalOccupation(kx, modeEnergy, massX, massZ, Ef, temp, ...
+    degFactor, constants, kzInfo);
+rhoXMode = cosX*fKx*dkx/(2*pi);
+end
+
+function fKx = longitudinalOccupation(kx, modeEnergy, massX, massZ, Ef, ...
+        temp, degFactor, constants, kzInfo)
 EkX = constants.hbar^2*kx(:).^2/(2*massX*constants.q);
 
 if kzInfo.integrate
@@ -230,8 +260,18 @@ else
     arg = min(max(arg, -80), 80);
     fKx = 2*degFactor./(1 + exp(arg));
 end
+end
 
-rhoXMode = cosX*fKx*dkx/(2*pi);
+function [density, densityByMode] = contactQuadratureDensity(kx, dkx, ...
+        modeEnergy, modeMassX, modeMassZ, Ef, temp, degFactor, constants, kzInfo)
+nModes = numel(modeEnergy);
+densityByMode = zeros(nModes, 1);
+for im = 1:nModes
+    fKx = longitudinalOccupation(kx, modeEnergy(im), modeMassX(im), ...
+        modeMassZ(im), Ef, temp, degFactor, constants, kzInfo);
+    densityByMode(im) = sum(real(fKx))*dkx/(2*pi);
+end
+density = sum(densityByMode);
 end
 
 function rhoYMode = transverseModeDensity(modeVector, gridY, yFace, rhoY)
@@ -275,6 +315,243 @@ if isfield(mat, 'n_of_modes') && ~isempty(mat.n_of_modes)
 end
 nModes = round(readParam(params, 'full2D_contactModeCount', defaultModes));
 nModes = max(1, min(nModes, nGrid));
+end
+
+function [EfUsed, info] = resolveContactFermiLevel(mat, p, params, sideName, ...
+        EfInput, modeEnergy, modeMassX, modeMassZ, temp, degFactor, ...
+        constants, integrateKz)
+requestedModel = normalizeFermiModel(readParam(params, ...
+    'full2D_contactModeFermiModel', 'contact-neutrality'));
+[targetDensity, targetInfo] = contactTargetSheetDensity( ...
+    mat, p, params, sideName);
+inputValue = scalarOrNaN(EfInput);
+
+info = struct;
+info.requestedModel = requestedModel;
+info.model = requestedModel;
+info.inputEV = inputValue;
+info.usedEV = NaN;
+info.targetSheetDensityM2 = targetDensity;
+info.target = targetInfo;
+info.achievedSheetDensityM2 = NaN;
+info.achievedSheetDensityByModeM2 = NaN(numel(modeEnergy), 1);
+info.relativeResidual = NaN;
+info.iterations = 0;
+info.converged = false;
+info.note = '';
+
+if strcmp(requestedModel, 'contact-neutrality')
+    if ~integrateKz
+        info.model = 'external-fallback';
+        info.note = ['Contact neutrality against a volumetric doping target ', ...
+            'requires the unresolved k_z continuum. Using the supplied Ef.'];
+    elseif ~isfinite(targetDensity) || targetDensity <= 0
+        info.model = 'external-fallback';
+        info.note = ['No positive contact sheet-density target is available. ', ...
+            'Using the supplied Ef.'];
+    else
+        [EfUsed, solveInfo] = solveContactNeutrality(modeEnergy, ...
+            modeMassX, modeMassZ, targetDensity, temp, degFactor, ...
+            constants, params, inputValue);
+        info.usedEV = EfUsed;
+        info.achievedSheetDensityM2 = solveInfo.achievedDensity;
+        info.achievedSheetDensityByModeM2 = solveInfo.densityByMode;
+        info.relativeResidual = solveInfo.relativeResidual;
+        info.iterations = solveInfo.iterations;
+        info.converged = solveInfo.converged;
+        info.bracketEV = solveInfo.bracketEV;
+        info.note = ['Ef was solved from the same transverse contact modes ', ...
+            'and x/z density-of-states masses used by the reservoir.'];
+        return
+    end
+end
+
+EfUsed = inputValue;
+info.usedEV = EfUsed;
+if isfinite(EfUsed) && integrateKz
+    [density, densityByMode] = contactSheetDensity(EfUsed, modeEnergy, ...
+        modeMassX, modeMassZ, temp, degFactor, constants);
+    info.achievedSheetDensityM2 = density;
+    info.achievedSheetDensityByModeM2 = densityByMode;
+    if isfinite(targetDensity) && targetDensity > 0
+        info.relativeResidual = abs(density-targetDensity)/targetDensity;
+    end
+end
+end
+
+function model = normalizeFermiModel(rawModel)
+model = lower(strrep(strrep(strtrim(char(rawModel)), '_', '-'), ' ', '-'));
+switch model
+    case {'contact', 'contact-modes', 'neutrality', 'contact-neutrality', 'solve'}
+        model = 'contact-neutrality';
+    case {'external', 'legacy', 'supplied', 'input'}
+        model = 'external';
+    otherwise
+        error('DG:Full2D:UnknownContactFermiModel', ...
+            ['Unknown full2D_contactModeFermiModel "%s". Use ', ...
+             '"contact-neutrality" or "external".'], char(rawModel));
+end
+end
+
+function [targetDensity, info] = contactTargetSheetDensity( ...
+        mat, p, params, sideName)
+sideName = lower(char(sideName));
+overrideName = ['full2D_', sideName, 'ContactSheetDensity'];
+targetDensity = readParam(params, overrideName, NaN);
+
+info = struct;
+info.side = sideName;
+info.units = 'm^-2';
+info.origin = overrideName;
+info.dopingCm3 = NaN;
+info.contactWidthM = NaN;
+
+if isfiniteScalar(targetDensity)
+    validateattributes(targetDensity, {'numeric'}, ...
+        {'real', 'finite', 'scalar', 'positive'}, mfilename, overrideName);
+    return
+end
+
+switch sideName
+    case 'source'
+        dopingName = 'N_s';
+    case 'drain'
+        dopingName = 'N_d';
+    otherwise
+        targetDensity = NaN;
+        info.origin = 'unavailable';
+        return
+end
+
+widthName = ['full2D_', sideName, 'ContactWidth'];
+if isfield(mat, dopingName) && ~isempty(mat.(dopingName)) ...
+        && isfield(mat, 'W_c') && ~isempty(mat.W_c)
+    doping = mat.(dopingName);
+    widthGridUnits = readParam(params, widthName, mat.W_c);
+    validateattributes(doping, {'numeric'}, ...
+        {'real', 'finite', 'scalar', 'positive'}, mfilename, dopingName);
+    validateattributes(widthGridUnits, {'numeric'}, ...
+        {'real', 'finite', 'scalar', 'positive'}, mfilename, widthName);
+    widthM = widthGridUnits*readField(p, 'coordinateScale', 1);
+    targetDensity = doping*1e6*widthM;
+    info.origin = [dopingName, '*', widthName];
+    info.dopingCm3 = doping;
+    info.contactWidthM = widthM;
+else
+    targetDensity = NaN;
+    info.origin = 'unavailable';
+end
+end
+
+function [Ef, info] = solveContactNeutrality(modeEnergy, modeMassX, ...
+        modeMassZ, targetDensity, temp, degFactor, constants, params, EfGuess)
+relativeTolerance = readParam(params, ...
+    'full2D_contactModeFermiTolerance', 1e-10);
+maxIterations = readParam(params, ...
+    'full2D_contactModeFermiMaxIterations', 200);
+validateattributes(relativeTolerance, {'numeric'}, ...
+    {'real', 'finite', 'scalar', 'positive'}, mfilename, ...
+    'full2D_contactModeFermiTolerance');
+validateattributes(maxIterations, {'numeric'}, ...
+    {'real', 'finite', 'scalar', 'integer', 'positive'}, mfilename, ...
+    'full2D_contactModeFermiMaxIterations');
+
+kTEV = constants.kB*temp/constants.q;
+modeMinimum = min(real(modeEnergy(:)));
+step = max(0.5, 20*kTEV);
+lower = modeMinimum - max(2, 80*kTEV);
+upper = modeMinimum + max(2, 80*kTEV);
+if isfinite(EfGuess)
+    lower = min(lower, EfGuess-step);
+    upper = max(upper, EfGuess+step);
+end
+
+[densityLower, ~] = contactSheetDensity(lower, modeEnergy, modeMassX, ...
+    modeMassZ, temp, degFactor, constants);
+[densityUpper, ~] = contactSheetDensity(upper, modeEnergy, modeMassX, ...
+    modeMassZ, temp, degFactor, constants);
+for iexpand = 1:50
+    if densityLower <= targetDensity && densityUpper >= targetDensity
+        break
+    end
+    step = 2*step;
+    if densityLower > targetDensity
+        lower = lower-step;
+        [densityLower, ~] = contactSheetDensity(lower, modeEnergy, ...
+            modeMassX, modeMassZ, temp, degFactor, constants);
+    end
+    if densityUpper < targetDensity
+        upper = upper+step;
+        [densityUpper, ~] = contactSheetDensity(upper, modeEnergy, ...
+            modeMassX, modeMassZ, temp, degFactor, constants);
+    end
+end
+if densityLower > targetDensity || densityUpper < targetDensity
+    error('DG:Full2D:ContactFermiBracketFailed', ...
+        'Could not bracket the contact-mode Fermi level for %g m^-2.', ...
+        targetDensity);
+end
+
+converged = false;
+iterations = 0;
+for iterations = 1:maxIterations
+    midpoint = 0.5*(lower+upper);
+    [densityMidpoint, ~] = contactSheetDensity(midpoint, modeEnergy, ...
+        modeMassX, modeMassZ, temp, degFactor, constants);
+    relativeResidual = abs(densityMidpoint-targetDensity)/targetDensity;
+    if relativeResidual <= relativeTolerance
+        lower = midpoint;
+        upper = midpoint;
+        converged = true;
+        break
+    elseif densityMidpoint < targetDensity
+        lower = midpoint;
+    else
+        upper = midpoint;
+    end
+end
+
+Ef = 0.5*(lower+upper);
+[achievedDensity, densityByMode] = contactSheetDensity(Ef, modeEnergy, ...
+    modeMassX, modeMassZ, temp, degFactor, constants);
+info = struct;
+info.achievedDensity = achievedDensity;
+info.densityByMode = densityByMode;
+info.relativeResidual = abs(achievedDensity-targetDensity)/targetDensity;
+info.iterations = iterations;
+info.converged = converged || info.relativeResidual <= relativeTolerance;
+info.bracketEV = [lower, upper];
+end
+
+function [density, densityByMode] = contactSheetDensity(Ef, modeEnergy, ...
+        modeMassX, modeMassZ, temp, degFactor, constants)
+kBT = constants.kB*temp;
+eta = constants.q*(Ef-real(modeEnergy(:)))/kBT;
+dosMass = sqrt(real(modeMassX(:)).*real(modeMassZ(:)));
+prefactor = degFactor*dosMass*kBT/(pi*constants.hbar^2);
+densityByMode = prefactor.*stableSoftplus(eta);
+density = sum(densityByMode);
+end
+
+function value = stableSoftplus(argument)
+value = zeros(size(argument));
+large = argument > 40;
+small = argument < -40;
+middle = ~(large | small);
+value(large) = argument(large);
+value(small) = exp(argument(small));
+value(middle) = log1p(exp(argument(middle)));
+end
+
+function value = scalarOrNaN(rawValue)
+value = NaN;
+if isnumeric(rawValue) && isscalar(rawValue) && isfinite(rawValue)
+    value = real(rawValue);
+end
+end
+
+function tf = isfiniteScalar(value)
+tf = isnumeric(value) && isscalar(value) && isfinite(value);
 end
 
 function tf = shouldIntegrateKz(mat, params)
