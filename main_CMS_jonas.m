@@ -214,9 +214,9 @@ mat.dg.params.Ly             = 160e-9;
 mat.dg.params.N_K_X = mat.dg.params.N_K_chi;                % full2D: local DG nodes in X on rectangular elements
 mat.dg.params.N_K_Y = mat.dg.params.N_K_chi;                % full2D: local DG nodes in Y on rectangular elements
 mat.dg.params.N_rho_x = mat.dg.params.N_xi/2;                 % full2D: FV cells in rho_x
-mat.dg.params.N_rho_y = 21; %mat.dg.params.N_xi/2;                 % full2D: FV cells in rho_y
+mat.dg.params.N_rho_y = 41; %mat.dg.params.N_xi/2;                 % full2D: FV cells in rho_y
 mat.dg.params.L_rho_x = mat.dg.params.Ly/2;                   % full2D: rho_x interval length
-mat.dg.params.L_rho_y = mat.dg.params.Ly/16;                  % full2D: rho_y interval length
+mat.dg.params.L_rho_y = mat.dg.params.Ly/8;                  % full2D: rho_y interval length
 
 mat.dg.params.N              = 80;   % Number of elements in k-direction
 

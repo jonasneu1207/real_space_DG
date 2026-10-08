@@ -12,6 +12,76 @@ classdef contactModeReservoirFull2DTest < matlab.unittest.TestCase
     end
 
     methods (Test)
+        function modeExtensionIsContinuousAtBothMaterialEdges(testCase)
+            mat = makeFlatContactModeMat();
+            mat.dg.params.N_rho_y = 3;
+            mat.dg.params.L_rho_y = 3e-6*mat.dy*1e-9;
+            p = initParams_full2D(mat, mat.V, 1, 1);
+
+            rho = get_ContactModeReservoirRho_full2D(mat,p,'source',1,mat.V);
+            R = reshape(rho,p.relative.NrhoX,p.relative.NrhoY,p.dg.Y.nDof);
+            edgeValues = squeeze(R(3,[1,3],[1,end]));
+            zeroSeparation = reshape(R(3,2,[1,end]),1,2);
+
+            testCase.verifyEqual(edgeValues./zeroSeparation, ...
+                ones(2),AbsTol=3e-6);
+        end
+
+        function modeExtensionReachesZeroAtHamiltonianGhostNodes(testCase)
+            mat = makeFlatContactModeMat();
+            p = initParams_full2D(mat,mat.V,1,1);
+
+            [rho,info] = get_ContactModeReservoirRho_full2D(mat,p,'source',1,mat.V);
+            R = reshape(rho,p.relative.NrhoX,p.relative.NrhoY,p.dg.Y.nDof);
+            halfCellValues = squeeze(R(3,[3,5],[1,end]));
+            zeroSeparation = reshape(R(3,4,[1,end]),1,2);
+            % The flat-box ground state is sin(j*pi/(Ny+1)). At a half
+            % step outside, phi is half the endpoint amplitude. The other
+            % endpoint lies halfway between the first two interior nodes.
+            expectedRatio = 0.25*(1+2*cos(pi/(mat.Ny+1)));
+
+            testCase.verifyEqual(halfCellValues./zeroSeparation, ...
+                expectedRatio*ones(2),AbsTol=1e-12);
+            testCase.verifyEqual(info.contact.modeZeroBoundaryY, ...
+                [mat.y(1)-mat.dy,mat.y(end)+mat.dy]*1e-9,AbsTol=1e-22);
+        end
+
+        function modeExtensionVanishesAtAndBeyondGhostNodes(testCase)
+            mat = makeFlatContactModeMat();
+            p = initParams_full2D(mat,mat.V,1,1);
+
+            rho = get_ContactModeReservoirRho_full2D(mat,p,'source',1,mat.V);
+            R = reshape(rho,p.relative.NrhoX,p.relative.NrhoY,p.dg.Y.nDof);
+            outsideValues = squeeze(R(3,[1,2,6,7],[1,end]));
+            zeroSeparation = reshape(R(3,4,[1,end]),1,2);
+
+            testCase.verifyEqual(outsideValues./zeroSeparation, ...
+                zeros(4,2),AbsTol=1e-12);
+        end
+
+        function modeExtensionPreservesInteriorDensityAndEnergies(testCase)
+            mat = makeFlatContactModeMat();
+            p = initParams_full2D(mat,mat.V,1,1);
+
+            [rho,info] = get_ContactModeReservoirRho_full2D(mat,p,'source',1,mat.V);
+            R = reshape(rho,p.relative.NrhoX,p.relative.NrhoY,p.dg.Y.nDof);
+            h = mat.dy*1e-9;
+            theta = pi/(mat.Ny+1);
+            modeSamples = sin(theta*(1:mat.Ny));
+            weightedNorm = sum(modeSamples.^2) ...
+                -0.5*(modeSamples(1)^2+modeSamples(end)^2);
+            nodeIndex = (p.dg.Y.nodes-mat.y(1)*1e-9)/h+1;
+            expectedDensity = sin(theta*nodeIndex).^2/weightedNorm;
+            sampledDensity = squeeze(R(3,4,:))*h/info.rhoXModeProfiles(3,1);
+            t = 1.054571817e-34^2/(2*9.1093837015e-31 ...
+                *mat.me_y_ch*1.602176634e-19*h^2);
+            expectedEnergy = mat.V(1,1)+2*t*(1-cos(theta));
+
+            testCase.verifyEqual(sampledDensity,expectedDensity(:),AbsTol=1e-12);
+            testCase.verifyEqual(info.modeEnergy,expectedEnergy,AbsTol=1e-12);
+            testCase.verifyEqual(info.fermiLevelUsed,1,AbsTol=1e-14);
+        end
+
         function contactModeReservoirHasExpectedShapeAndOrigin(testCase)
             mat = makeContactModeMat();
             p = initParams_full2D(mat, mat.V, 2.0, 1.8);
@@ -237,6 +307,15 @@ mat.dg.params.full2D_reservoirModel = 'contact-modes';
 mat.dg.params.full2D_contactModeCount = 2;
 mat.dg.params.full2D_contactModeIntegrateKz = false;
 mat.dg.params.full2D_contactMode_Nkx = 7;
+end
+
+function mat = makeFlatContactModeMat()
+mat = makeContactModeMat();
+mat.V(:) = 0.05;
+mat.dg.params.full2D_contactModeCount = 1;
+mat.dg.params.full2D_contactModeFermiModel = 'external';
+mat.dg.params.N_rho_y = 7;
+mat.dg.params.L_rho_y = 7*mat.dy*1e-9;
 end
 
 function mat = makeMaskedContactModeMat()

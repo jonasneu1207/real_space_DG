@@ -19,6 +19,9 @@ function [rhoBoundary, info] = get_ContactModeReservoirRho_full2D(mat, p, sideNa
 % By default the Fermi level is obtained from charge neutrality using these
 % same contact modes and their mode-averaged x/z masses. The externally
 % supplied Ef is retained as an optional legacy/fallback value.
+% Mode sampling includes zero-valued ghost nodes one Hamiltonian grid step
+% outside each material Y edge. This continues the endpoint amplitudes
+% continuously to the existing discrete Dirichlet closure.
 %
 % Relative-vector order follows the rest of the Full-2D code:
 %   rho_x is fastest, then rho_y. The returned array therefore has size
@@ -162,6 +165,13 @@ info.meYRelativeRange = [min(mYRelative), max(mYRelative)];
 info.meZRelativeRange = [min(mZRelative), max(mZRelative)];
 info.HSize = size(H);
 info.HNnz = nnz(H);
+modeGrid = contactModeGridWithGhosts(gridY);
+info.modeExtension = 'linear-to-dirichlet-ghost-nodes';
+info.modeZeroBoundaryY = modeGrid([1,end]).';
+info.modeExtensionNote = ['Modes are interpolated to zero ghost nodes one ', ...
+    'Hamiltonian grid step outside each material Y edge, and are zero ', ...
+    'beyond them. Mode normalization and neutrality use the material ', ...
+    'Y interval.'];
 info.note = ['The transverse contact Hamiltonian is built on the material ', ...
     'Y grid at the selected Source/Drain X edge.'];
 end
@@ -184,6 +194,9 @@ centerValue = -leftValue - rightValue + Vedge(interior);
 
 % Match the boundary convention used by eval_transversal_Hamiltonian.m so
 % the contact-mode model is comparable to the existing Mode-Space setup.
+% In uniform edge material these rows retain the interior kinetic diagonal
+% while omitting the exterior neighbor: its mode value is zero one dy
+% beyond the first/last grid point, not at the stored endpoint itself.
 ii = [interior; interior; interior; 1; 1; nY; nY];
 jj = [interior-1; interior; interior+1; 1; 2; nY; nY-1];
 vv = [leftValue; centerValue; rightValue; ...
@@ -275,14 +288,25 @@ density = sum(densityByMode);
 end
 
 function rhoYMode = transverseModeDensity(modeVector, gridY, yFace, rhoY)
+% Retain the zero ghost values implicit in the contact Hamiltonian. Direct
+% zero extrapolation from gridY would cut off nonzero endpoint amplitudes.
+modeGrid = contactModeGridWithGhosts(gridY);
+modeWithGhosts = [0;modeVector(:);0];
 rhoYMode = zeros(numel(rhoY), numel(yFace));
 for iy = 1:numel(yFace)
     yPlus = yFace(iy) + 0.5*rhoY;
     yMinus = yFace(iy) - 0.5*rhoY;
-    phiPlus = interp1(gridY, modeVector, yPlus, 'linear', 0);
-    phiMinus = interp1(gridY, modeVector, yMinus, 'linear', 0);
+    phiPlus = interp1(modeGrid, modeWithGhosts, yPlus, 'linear', 0);
+    phiMinus = interp1(modeGrid, modeWithGhosts, yMinus, 'linear', 0);
     rhoYMode(:, iy) = phiPlus.*conj(phiMinus);
 end
+end
+
+function modeGrid = contactModeGridWithGhosts(gridY)
+% Use the same spacing as transverseHamiltonian.
+gridY = gridY(:);
+dy = mean(diff(gridY));
+modeGrid = [gridY(1)-dy;gridY;gridY(end)+dy];
 end
 
 function massKg = modeAveragedMass(modeVector, massRelative, defaultRelative, constants, gridY)
