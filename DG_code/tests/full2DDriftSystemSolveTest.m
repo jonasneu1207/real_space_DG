@@ -12,6 +12,16 @@ classdef full2DDriftSystemSolveTest < matlab.unittest.TestCase
     end
 
     methods (Test)
+        function collocatedPotentialUsesCoordinatewiseConstantExtension(testCase)
+            verifyPotentialExtensionAgainstPaddedGrid(testCase, ...
+                'collocated');
+        end
+
+        function fvPotentialUsesCoordinatewiseConstantExtension(testCase)
+            verifyPotentialExtensionAgainstPaddedGrid(testCase, ...
+                'fv-consistent');
+        end
+
         function driftIsSparseDiagonalAndMatrixFreeMatches(testCase)
             mat = makeSmallMat();
             mat.dg.params.full2D_potentialDiscretization = 'collocated';
@@ -511,6 +521,37 @@ classdef full2DDriftSystemSolveTest < matlab.unittest.TestCase
             testCase.verifyEmpty(DG.rho);
         end
     end
+end
+
+function verifyPotentialExtensionAgainstPaddedGrid(testCase, mode)
+mat = makeSmallMat();
+mat.dg.params.full2D_potentialDiscretization = mode;
+mat.dg.params.full2D_cap_scale = 0;
+mat.dg.params.full2D_assembleDriftMatrix = true;
+p = initParams_full2D(mat, mat.V, 0.2, 0.1);
+
+[G, info] = get_Drift_full2D(mat, p, mat.V);
+padded = padPotentialGridWithConstantBoundaryValues(mat);
+GReference = get_Drift_full2D(padded, p, padded.V);
+
+referenceScale = max(norm(GReference, 'fro'), eps);
+testCase.verifyLessThan(norm(G-GReference, 'fro')/referenceScale, 1e-12);
+testCase.verifyEqual(info.potentialGrid.interpolation, ...
+    'linear after independent coordinate clamping to the material grid');
+end
+
+function padded = padPotentialGridWithConstantBoundaryValues(mat)
+xSpan = mat.x(end)-mat.x(1);
+ySpan = mat.y(end)-mat.y(1);
+padded = mat;
+padded.x = [mat.x(1)-xSpan, mat.x(:).', mat.x(end)+xSpan];
+padded.y = [mat.y(1)-ySpan, mat.y(:).', mat.y(end)+ySpan];
+padded.Nx = numel(padded.x);
+padded.Ny = numel(padded.y);
+
+potentialWithXPadding = [mat.V(1, :); mat.V; mat.V(end, :)];
+padded.V = [potentialWithXPadding(:, 1), potentialWithXPadding, ...
+    potentialWithXPadding(:, end)];
 end
 
 function mat = makeSmallMat()

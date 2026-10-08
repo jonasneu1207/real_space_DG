@@ -147,6 +147,8 @@ data.relativeY = kron(p.relative.rhoY.cells(:), ones(p.relative.NrhoX, 1));
 data.capProfile = full(diag(cap.Crho));
 data.potential = griddedInterpolant({gridX(:), gridY(:)}, Vfield, ...
     'linear', 'nearest');
+data.potentialXRange = [gridX(1), gridX(end)];
+data.potentialYRange = [gridY(1), gridY(end)];
 
 data.Qdrift = readParam(params, 'full2D_Q_drift', Qdefault);
 data.driftScale = readParam(params, 'full2D_drift_scale', 1);
@@ -571,8 +573,10 @@ rhoY = data.relativeY(relativeIds);
 X = data.centerX(centerIds);
 Y = data.centerY(centerIds);
 
-Vplus = data.potential(X + 0.5*rhoX, Y + 0.5*rhoY);
-Vminus = data.potential(X - 0.5*rhoX, Y - 0.5*rhoY);
+Vplus = evaluateExtendedPotential(data, ...
+    X + 0.5*rhoX, Y + 0.5*rhoY);
+Vminus = evaluateExtendedPotential(data, ...
+    X - 0.5*rhoX, Y - 0.5*rhoY);
 deltaV = Vplus - Vminus;
 
 diagonal = data.potentialCoefficient*deltaV ...
@@ -613,9 +617,24 @@ centerY = centerY(:).';
 
 rhoX = 0.5*data.relativeVertexX;
 rhoY = 0.5*data.relativeVertexY;
-Vplus = data.potential(centerX + rhoX, centerY + rhoY);
-Vminus = data.potential(centerX - rhoX, centerY - rhoY);
+Vplus = evaluateExtendedPotential(data, ...
+    centerX + rhoX, centerY + rhoY);
+Vminus = evaluateExtendedPotential(data, ...
+    centerX - rhoX, centerY - rhoY);
 deltaV = Vplus - Vminus;
+end
+
+function values = evaluateExtendedPotential(data, queryX, queryY)
+%EVALUATEEXTENDEDPOTENTIAL Constant extension in each coordinate.
+%
+% Clamp X and Y independently before interpolation. In particular, a
+% query outside the X range retains its tangential Y coordinate instead of
+% selecting the nearest two-dimensional material-grid point.
+queryX = min(max(queryX, data.potentialXRange(1)), ...
+    data.potentialXRange(2));
+queryY = min(max(queryY, data.potentialYRange(1)), ...
+    data.potentialYRange(2));
+values = data.potential(queryX, queryY);
 end
 
 function [Vfield, gridX, gridY, info] = potentialOnMaterialGrid(mat, p, Vxy)
@@ -631,10 +650,12 @@ info = struct;
 info.size = size(Vfield);
 info.xRange = [gridX(1), gridX(end)];
 info.yRange = [gridY(1), gridY(end)];
-info.interpolation = 'linear inside the material grid, nearest outside';
+info.interpolation = ['linear after independent coordinate clamping ', ...
+    'to the material grid'];
 info.note = ['Potential values are sampled at X +/- rho_x/2 and ', ...
-    'Y +/- rho_y/2. The nearest extension represents constant leads ', ...
-    'outside the available material-potential grid.'];
+    'Y +/- rho_y/2. Each query coordinate is clamped independently. ', ...
+    'This gives a constant continuation normal to a boundary while ', ...
+    'preserving the linearly interpolated tangential boundary profile.'];
 end
 
 function Vfield = fieldToXY(field, mat)
