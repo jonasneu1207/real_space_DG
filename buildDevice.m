@@ -19,9 +19,9 @@ switch device
         n_of_valleys = 1;  % number of valleys
         deg_factor = 1;    % degenarcy factor of the valley
         
-        L_c = 10; % channel length
-        L_s = 15; % source length
-        L_d = 15; % drain length
+        L_c = 6; % channel length
+        L_s = 18; % source length
+        L_d = 18; % drain length
         
         L_x = L_c + L_s + L_d;
         
@@ -43,9 +43,9 @@ switch device
         Eg_ox = 8.8;
         Eps_ox = 3.9;
         
-        me_x_ox = 0.5; %0.5;
-        me_y_ox = 0.5; %0.5;
-        me_z_ox = 0.5; %0.5;
+        me_x_ox = 0.041; %0.5;
+        me_y_ox = 0.041; %0.5;
+        me_z_ox = 0.041; %0.5;
         
         Xi = 4.5; % affinity of the channel GaInAs
         phi_m_g = 4.74; % metal work function of the Ag-gate contact
