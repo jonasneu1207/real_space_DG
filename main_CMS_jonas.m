@@ -162,10 +162,10 @@ mat.dg.params.full2D_maxDirectSolveDof = 160000;
 mat.dg.params.full2D_maxAssembledDof = 160000;
 mat.dg.params.full2D_preconditioner = 'rowabs';             % Preconditioner for BICGSTAB or GMRES when trying to solve huge systems via matrix-free operators
 mat.dg.params.full2D_reservoirModel = 'contact-modes';    % 'contact-modes' vs 'material-default'
-mat.dg.params.full2D_contactModeFermiModel = 'contact-neutrality'; % solve Ef from the same contact modes and contact doping; 'external' uses supplied EfL/EfR
+mat.dg.params.full2D_contactModeFermiModel = 'contact-neutrality'; % contact-neutrality: solve Ef from the same contact modes and contact doping; 'external' uses supplied EfL/EfR
 mat.dg.params.full2D_solverMaxIt = 2000;
-mat.dg.params.full2D_sourceContactMask = true(mat.Ny,1);
-mat.dg.params.full2D_drainContactMask  = true(mat.Ny,1);
+% mat.dg.params.full2D_sourceContactMask = true(mat.Ny,1);
+% mat.dg.params.full2D_drainContactMask  = true(mat.Ny,1);
 % mat.dg.params.full2D_sourceContactMask(end,1) = false;
 % mat.dg.params.full2D_drainContactMask(end,1)  = false;
 % mat.dg.params.full2D_sourceContactMask(1,1) = false;
@@ -184,7 +184,7 @@ mat.dg.params.full2D_massQuadratureOrder = 5;                % tensor-product Ga
 % mat.dg.params.full2D_referenceMassX = mat.me_x_ch;
 % mat.dg.params.full2D_referenceMassY = mat.me_y_ch;
 
-%mat.dg.params.rho_flux = 'rusanov';                         % general rho flux; in full2D this controls X when full2D_Y_flux is set
+mat.dg.params.rho_flux = 'rusanov';                         % general rho flux; in full2D this controls X when full2D_Y_flux is set
 mat.dg.params.rho_diff_scale = 1;
 mat.dg.params.rho_drift_scale = 1e9;
 
