@@ -1,4 +1,4 @@
-function [A, rhs, info] = get_Diff_variableMass_full2D(mat, p, boundary)
+function [A, rhs, info] = get_Diff_variableMass_full2D(mat, p, boundary, closeHardWall)
 %GET_DIFF_VARIABLEMASS_FULL2D Full-2D kinetic operator for m=m(X,Y).
 %
 % The constant-mass Wigner equation contains only the mixed derivatives
@@ -41,6 +41,9 @@ function [A, rhs, info] = get_Diff_variableMass_full2D(mat, p, boundary)
 % Global DOF order is unchanged:
 %   f(iRhoX,iRhoY,iX,iY), with rho_x fastest.
 
+if nargin < 4
+    closeHardWall = true;
+end
 if nargin < 3 || isempty(boundary)
     boundary = get_Boundary_full2D(mat, p, p.EfL, p.EfR, []);
 end
@@ -55,7 +58,7 @@ referenceMat = mat;
 referenceMat.me_x_ch = referenceMassX;
 referenceMat.me_y_ch = referenceMassY;
 [AReference, rhs, referenceInfo] = get_Diff_full2D( ...
-    referenceMat, p, boundary);
+    referenceMat, p, boundary, false);
 
 data = variableMassData(mat, p, params, referenceInfo, ...
     referenceMassX, referenceMassY);
@@ -87,6 +90,9 @@ info.getRowAbsSum = @() referenceInfo.getRowAbsSum() ...
     + getCorrectionRowAbsBound(data);
 info.getRelativeBlockData = @() makeVariableMassBlockData( ...
     referenceInfo, data);
+if closeHardWall && strcmp(get_YBoundaryType_full2D(mat), 'hard-wall')
+    [A, rhs, info] = constrain_HardWall_full2D(A, rhs, info, p);
+end
 end
 
 function data = variableMassData(mat, p, params, referenceInfo, massX, massY)
@@ -753,38 +759,43 @@ blockData.note = ['Each block contains the established reference transport ', ..
     'plus the exact center-block diagonal of the endpoint-mass correction.'];
 blockData.getBlock = @(centerId) variableMassBlock( ...
     referenceBlocks, data, centerId);
+blockData.getCoupledBlock = @(rowId, colId) variableMassBlock( ...
+    referenceBlocks, data, rowId, colId);
 end
 
-function block = variableMassBlock(referenceBlocks, data, centerId)
-block = referenceBlocks.getBlock(centerId);
+function block = variableMassBlock(referenceBlocks, data, centerId, columnId)
+if nargin < 4
+    columnId = centerId;
+end
+block = referenceBlocks.getCoupledBlock(centerId, columnId);
 if data.hasXCorrection
     block = block + axisCorrectionBlock(data, data.centerDerivativeX, ...
         data.centerAdjointX, data.relativeDerivativeX, ...
         data.relativeAdjointX, data.massXPlus, data.massXMinus, ...
-        data.coefficientX, centerId);
+        data.coefficientX, centerId, columnId);
 end
 if data.hasYCorrection
     block = block + axisCorrectionBlock(data, data.centerDerivativeY, ...
         data.centerAdjointY, data.relativeDerivativeY, ...
         data.relativeAdjointY, data.massYPlus, data.massYMinus, ...
-        data.coefficientY, centerId);
+        data.coefficientY, centerId, columnId);
 end
 block = sparse(block);
 end
 
 function block = axisCorrectionBlock(data, C, CAdjoint, R, RAdjoint, ...
-        plusMass, minusMass, coefficient, centerId)
+        plusMass, minusMass, coefficient, centerId, columnId)
 plusBlock = derivativeCenterBlock(data, C, CAdjoint, R, RAdjoint, ...
-    plusMass, centerId, 1);
+    plusMass, centerId, columnId, 1);
 minusBlock = derivativeCenterBlock(data, C, CAdjoint, R, RAdjoint, ...
-    minusMass, centerId, -1);
+    minusMass, centerId, columnId, -1);
 block = coefficient*(-plusBlock + minusBlock);
 end
 
 function block = derivativeCenterBlock(data, C, CAdjoint, R, RAdjoint, ...
-        massSamples, centerId, signR)
+        massSamples, centerId, columnId, signR)
 [centerDiagonal, leftCross, rightCross, centerRoundTrip] = ...
-    centerBlockCoefficients(data, C, CAdjoint, massSamples, centerId);
+    centerBlockCoefficients(data, C, CAdjoint, massSamples, centerId, columnId);
 block = RAdjoint*spdiags(centerDiagonal, 0, data.nRelative, ...
     data.nRelative)*R ...
     + 0.5*signR*(spdiags(leftCross, 0, data.nRelative, ...
@@ -796,33 +807,33 @@ block = sparse(block);
 end
 
 function [centerDiagonal, leftCross, rightCross, centerRoundTrip] = ...
-        centerBlockCoefficients(data, C, CAdjoint, massSamples, centerId)
+        centerBlockCoefficients(data, C, CAdjoint, massSamples, centerId, columnId)
 %CENTERBLOCKCOEFFICIENTS Exact rho-block coefficients of B_e(b).
 % Although B_e is dense inside one DG element, it is diagonal in the
 % relative-coordinate index. These four projected coefficient vectors are
 % sufficient to form the exact center-coordinate diagonal block used by
 % block Jacobi without assembling the complete four-dimensional matrix.
-element = data.centerElementId(centerId);
-localId = data.centerLocalId(centerId);
-centerIds = data.elementCenterIds(:, element);
-sampleIds = (element-1)*data.nCenterQuadrature ...
-    + (1:data.nCenterQuadrature);
-massElement = massSamples(:, sampleIds);
-
-leftAtQuadrature = data.centerProjection ...
-    * full(CAdjoint(centerId, centerIds)).';
-rightAtQuadrature = data.centerInterpolation ...
-    * full(C(centerIds, centerId));
-trialAtCenter = data.centerInterpolation(:, localId);
-testAtCenter = data.centerProjection(:, localId);
-
-weights = [testAtCenter.*trialAtCenter, ...
-    leftAtQuadrature.*trialAtCenter, ...
-    testAtCenter.*rightAtQuadrature];
-coefficients = massElement*weights;
-centerDiagonal = coefficients(:, 1);
-leftCross = coefficients(:, 2);
-rightCross = coefficients(:, 3);
+if nargin < 6
+    columnId = centerId;
+end
+rowElement = data.centerElementId(centerId);
+colElement = data.centerElementId(columnId);
+rowLocal = data.centerLocalId(centerId);
+colLocal = data.centerLocalId(columnId);
+rowIds = data.elementCenterIds(:, rowElement);
+colIds = data.elementCenterIds(:, colElement);
+rowSamples = (rowElement-1)*data.nCenterQuadrature+(1:data.nCenterQuadrature);
+colSamples = (colElement-1)*data.nCenterQuadrature+(1:data.nCenterQuadrature);
+testAtCenter = data.centerProjection(:, rowLocal);
+trialAtCenter = data.centerInterpolation(:, colLocal);
+centerDiagonal = zeros(data.nRelative, 1);
+if rowElement == colElement
+    centerDiagonal = massSamples(:,rowSamples)*(testAtCenter.*trialAtCenter);
+end
+leftAtQuadrature = data.centerProjection*full(CAdjoint(centerId,colIds)).';
+rightAtQuadrature = data.centerInterpolation*full(C(rowIds,columnId));
+leftCross = massSamples(:,colSamples)*(leftAtQuadrature.*trialAtCenter);
+rightCross = massSamples(:,rowSamples)*(testAtCenter.*rightAtQuadrature);
 
 % The center-center path C^* B C is different from the two cross terms:
 % C may first send the trial value into a neighbouring DG element, B acts
@@ -830,7 +841,7 @@ rightCross = coefficients(:, 3);
 % elements touched by both the C column and the C^* row must contribute;
 % restricting this term to the element that owns centerId would omit face
 % couplings from the Jacobi diagonal and the rho-block preconditioner.
-columnSupport = find(C(:, centerId));
+columnSupport = find(C(:, columnId));
 rowSupport = find(CAdjoint(centerId, :)).';
 columnElements = unique(data.centerElementId(columnSupport));
 rowElements = unique(data.centerElementId(rowSupport));
@@ -844,7 +855,7 @@ for id = 1:numel(roundTripElements)
     left = data.centerProjection ...
         * full(CAdjoint(centerId, roundTripCenterIds)).';
     right = data.centerInterpolation ...
-        * full(C(roundTripCenterIds, centerId));
+        * full(C(roundTripCenterIds, columnId));
     centerRoundTrip = centerRoundTrip ...
         + massSamples(:, roundTripSampleIds)*(left.*right);
 end

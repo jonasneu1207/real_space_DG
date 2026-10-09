@@ -22,6 +22,14 @@ sourceInfo.contactMask = sourceMaskInfo;
 drainInfo.contactMask = drainMaskInfo;
 sourceRho = applyContactMask(sourceRho, sourceMask);
 drainRho = applyContactMask(drainRho, drainMask);
+if strcmp(get_YBoundaryType_full2D(mat), 'hard-wall')
+    wall = get_HardWallGeometry_full2D(p);
+    faceMask = repelem(wall.active, p.relative.NrhoX, 1);
+    sourceRho = sourceRho.*faceMask;
+    drainRho = drainRho.*faceMask;
+    sourceInfo.hardWallSupportApplied = true;
+    drainInfo.hardWallSupportApplied = true;
+end
 
 inflow = struct;
 inflow.source = makeInflowSide('X-left', 'Source', p.domain.normals.XLeft, ...

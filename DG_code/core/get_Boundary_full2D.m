@@ -4,11 +4,10 @@ function [boundary, info] = get_Boundary_full2D(mat, p, EfL, EfR, Vxy)
 % Implemented boundary types for the rectangular X-Y domain:
 %   X-left   Source characteristic inflow, outward normal (-1,0)
 %   X-right  Drain characteristic inflow, outward normal ( 1,0)
-%   Y-bottom Selectable specular or zero-inflow, outward normal (0,-1)
-%   Y-top    Selectable specular or zero-inflow, outward normal (0, 1)
+%   Y-bottom/top: specular, zero-inflow, or two-point Dirichlet hard-wall.
 %
-% No special corner condition is introduced. Corner DOFs receive only the
-% contributions from their adjacent tensor-product faces.
+% In hard-wall mode the two-point Dirichlet constraints also take precedence
+% at X/Y corners. Other modes retain the adjacent-face contributions.
 
 if nargin < 5
     Vxy = [];
@@ -30,6 +29,11 @@ boundary.physical.YTop.R_y = reflection.R_y;
 if strcmp(yBoundaryType, 'specular')
     physicalYType = reflection.type;
     incomingState = 'rho_in = R_y*rho_inside';
+elseif strcmp(yBoundaryType, 'hard-wall')
+    physicalYType = 'two-point-dirichlet-hard-wall';
+    incomingState = 'rho = 0 if Y +/- rho_y/2 reaches either wall';
+    boundary.physical.YBottom = rmfield(boundary.physical.YBottom,{'ghostOperator','R_y'});
+    boundary.physical.YTop = rmfield(boundary.physical.YTop,{'ghostOperator','R_y'});
 else
     physicalYType = 'characteristic-zero-inflow';
     incomingState = 'rho_in = 0; rho_out comes from the interior trace';
@@ -51,6 +55,7 @@ info.inflow = inflowInfo;
 info.capNnz = nnz(cap.Crho);
 info.yBoundaryType = yBoundaryType;
 info.reflectionActive = strcmp(yBoundaryType, 'specular');
+info.hardWallActive = strcmp(yBoundaryType, 'hard-wall');
 info.reflectionNnz = info.reflectionActive*nnz(reflection.R_y);
 info.availableReflectionNnz = nnz(reflection.R_y);
 info.normalConvention = p.domain.normalConvention;

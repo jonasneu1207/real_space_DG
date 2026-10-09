@@ -44,10 +44,10 @@ massModel = normalizeMassModel(readParam(params, ...
     'full2D_massModel', 'constant'));
 switch massModel
     case 'constant'
-        [A_diff, rhsDiff, diffInfo] = get_Diff_full2D(mat, p, boundary);
+        [A_diff, rhsDiff, diffInfo] = get_Diff_full2D(mat, p, boundary, false);
     case 'position-dependent-bdd'
         [A_diff, rhsDiff, diffInfo] = ...
-            get_Diff_variableMass_full2D(mat, p, boundary);
+            get_Diff_variableMass_full2D(mat, p, boundary, false);
 end
 [G_drift, driftInfo] = get_Drift_full2D(mat, p, Vxy);
 
@@ -84,6 +84,11 @@ info.assembleRhs = @() diffInfo.assembleRhs();
 info.getDiagonal = @() getSystemDiagonal(diffInfo, driftInfo);
 info.getRowAbsSum = @() getSystemRowAbsSum(diffInfo, driftInfo);
 info.getRelativeBlockData = @() getSystemRelativeBlockData(diffInfo, driftInfo);
+if strcmp(get_YBoundaryType_full2D(mat), 'hard-wall')
+    % Constrain the COMPLETE operator once. Constraining only transport
+    % would let the potential/FV stencil regenerate forbidden entries.
+    [A, rhs, info] = constrain_HardWall_full2D(A, rhs, info, p);
+end
 end
 
 function model = normalizeMassModel(value)
@@ -200,6 +205,9 @@ blockData.note = ['System block c is the local rho_x/rho_y transport ', ...
     'Off-block center-coordinate DG couplings remain in A, not in M.'];
 blockData.getBlock = @(centerId) systemRelativeBlock(diffBlockData, ...
     driftBlockData, centerId);
+blockData.getCoupledBlock = @(rowId, colId) ...
+    diffBlockData.getCoupledBlock(rowId,colId) ...
+    + driftBlockData.getCoupledBlock(rowId,colId);
 end
 
 function block = systemRelativeBlock(diffBlockData, driftBlockData, centerId)
