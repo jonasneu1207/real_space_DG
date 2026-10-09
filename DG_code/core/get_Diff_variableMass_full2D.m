@@ -34,6 +34,9 @@ function [A, rhs, info] = get_Diff_variableMass_full2D(mat, p, boundary)
 % Open-boundary data still use the homogeneous-contact reference operator;
 % this is the standard lead assumption and requires the mass to have
 % reached its contact value at the outer X faces.
+% Endpoint coordinates are clamped independently to the material grid
+% before linear interpolation of the inverse mass. This preserves the
+% tangential boundary profile under constant normal continuation.
 %
 % Global DOF order is unchanged:
 %   f(iRhoX,iRhoY,iX,iY), with rho_x fastest.
@@ -321,6 +324,9 @@ function [plusCorrection, minusCorrection, info] = ...
     mat, p, axisName, referenceMass);
 massInterpolant = griddedInterpolant({gridX, gridY}, inverseMass, ...
     'linear', 'nearest');
+gridBounds = [gridX(1), gridX(end); gridY(1), gridY(end)];
+sampleInverseMass = @(queryX, queryY) evaluateExtendedInverseMass( ...
+    massInterpolant, gridBounds, queryX, queryY);
 
 relativeX = repmat(p.relative.rhoX.cells(:), p.relative.NrhoY, 1);
 relativeY = kron(p.relative.rhoY.cells(:), ...
@@ -341,9 +347,9 @@ for first = 1:sampleChunk:nSamples
     ids = first:last;
     X = centerX(ids).';
     Y = centerY(ids).';
-    plusCorrection(:, ids) = massInterpolant( ...
+    plusCorrection(:, ids) = sampleInverseMass( ...
         X + 0.5*relativeX, Y + 0.5*relativeY) - 1/referenceMass;
-    minusCorrection(:, ids) = massInterpolant( ...
+    minusCorrection(:, ids) = sampleInverseMass( ...
         X - 0.5*relativeX, Y - 0.5*relativeY) - 1/referenceMass;
 end
 
@@ -369,17 +375,33 @@ info.endpointExchangeRelativeDefect = max(abs(plusCorrection(:) ...
 info.endpointExchangeDefinition = ...
     'b_plus(R,rho) must equal b_minus(R,-rho).';
 info.maxOuterXFaceCorrection = outerXFaceCorrection( ...
-    massInterpolant, p, relativeX, relativeY, referenceMass);
+    sampleInverseMass, p, relativeX, relativeY, referenceMass);
 info.outerXFacesMatchReference = info.maxOuterXFaceCorrection ...
     <= absoluteTolerance;
-info.interpolation = ...
-    'linear inverse mass at center Gauss-Lobatto points, nearest extension';
+info.interpolation = ['linear inverse mass after independent coordinate ', ...
+    'clamping to the material grid'];
+info.xRange = gridBounds(1, :);
+info.yRange = gridBounds(2, :);
+info.extensionNote = ['Shifted endpoint coordinates are clamped ', ...
+    'independently before inverse-mass interpolation, preserving the ', ...
+    'tangential boundary profile. The same sampling is used for the ', ...
+    'projected operator and the physical X-face diagnostic.'];
 info.quadratureOrder = projection.quadratureOrder;
 info.nProjectedSamples = nSamples;
 info.chunkQuadratureSamples = sampleChunk;
 end
 
-function maximum = outerXFaceCorrection(massInterpolant, p, ...
+function values = evaluateExtendedInverseMass(massInterpolant, gridBounds, ...
+        queryX, queryY)
+%EVALUATEEXTENDEDINVERSEMASS Constant continuation in each coordinate.
+% An out-of-range X must not also snap the in-range Y to a grid point,
+% or vice versa. Interpolate only after clamping both coordinates.
+queryX = min(max(queryX, gridBounds(1, 1)), gridBounds(1, 2));
+queryY = min(max(queryY, gridBounds(2, 1)), gridBounds(2, 2));
+values = massInterpolant(queryX, queryY);
+end
+
+function maximum = outerXFaceCorrection(sampleInverseMass, p, ...
         relativeX, relativeY, referenceMass)
 %OUTERXFACECORRECTION Diagnose the homogeneous-lead assumption exactly on
 %the two physical X faces. The projected volume samples do not generally
@@ -389,9 +411,9 @@ faceX = [p.domain.X(1), p.domain.X(2)];
 maximum = 0;
 for side = 1:2
     X = faceX(side)*ones(size(faceY));
-    plus = massInterpolant(X + 0.5*relativeX, ...
+    plus = sampleInverseMass(X + 0.5*relativeX, ...
         faceY + 0.5*relativeY) - 1/referenceMass;
-    minus = massInterpolant(X - 0.5*relativeX, ...
+    minus = sampleInverseMass(X - 0.5*relativeX, ...
         faceY - 0.5*relativeY) - 1/referenceMass;
     maximum = max(maximum, max(abs([plus(:); minus(:)])));
 end
