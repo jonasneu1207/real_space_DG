@@ -183,6 +183,7 @@ mat.dg.params.full2D_massQuadratureOrder = 5;                % tensor-product Ga
 % Optional scalar lead/reference masses for the characteristic contact flux:
 % mat.dg.params.full2D_referenceMassX = mat.me_x_ch;
 % mat.dg.params.full2D_referenceMassY = mat.me_y_ch;
+mat.dg.params.full2D_cap_scale = 1;
 
 mat.dg.params.rho_flux = 'rusanov';                         % general rho flux; in full2D this controls X when full2D_Y_flux is set
 mat.dg.params.rho_diff_scale = 1;
@@ -216,7 +217,7 @@ mat.dg.params.N_K_Y = mat.dg.params.N_K_chi;                % full2D: local DG n
 mat.dg.params.N_rho_x = mat.dg.params.N_xi/2;                 % full2D: FV cells in rho_x
 mat.dg.params.N_rho_y = 41; %mat.dg.params.N_xi/2;                 % full2D: FV cells in rho_y
 mat.dg.params.L_rho_x = mat.dg.params.Ly/2;                   % full2D: rho_x interval length
-mat.dg.params.L_rho_y = mat.dg.params.Ly/8;                  % full2D: rho_y interval length
+mat.dg.params.L_rho_y = mat.dg.params.Ly/16;                  % full2D: rho_y interval length
 
 mat.dg.params.N              = 80;   % Number of elements in k-direction
 

@@ -417,7 +417,7 @@ for IG = 1 : length(mat.Vg)
                         % potential that was used above for the current
                         % subband update; mat.V itself has already been
                         % restored to Vref at this point.
-                        DG = solve_transport_DG_full2D(mat, Vref+Vbi, Ef0_L-mat.Vs, Ef0_R-mat.Vd(ID));
+                        DG = solve_transport_DG_full2D(mat, Vref, Ef0_L-mat.Vs, Ef0_R-mat.Vd(ID));
                         if isempty(DG.rho) || isempty(DG.n)
                             error('DG:Full2D:SolveSkipped', ...
                                 ['Full 2D DG/FV operator was built, but no transport solve was run. ', ...
