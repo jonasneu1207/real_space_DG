@@ -1,4 +1,4 @@
-function [A, rhs, info] = get_Diff_full2D(mat, p, boundary)
+function [A, rhs, info] = get_Diff_full2D(mat, p, boundary, closeHardWall)
 %GET_DIFF_FULL2D Full-2D DG/FV transport operator in rho basis.
 %
 % This is the first assembled part of the full physical 2D Wigner equation.
@@ -33,6 +33,10 @@ function [A, rhs, info] = get_Diff_full2D(mat, p, boundary)
 % Characteristic splits are also used on physical boundary faces to impose
 % Source/Drain inflow and specular reflection cleanly.
 
+% Internal builders defer closure until all kinetic/drift terms are added.
+if nargin < 4
+    closeHardWall = true;
+end
 if nargin == 1
     p = mat;
     mat = struct;
@@ -127,8 +131,10 @@ else
     operatorParts = addInteriorRusanovPart(operatorParts, 'Y interior Rusanov', ...
         scaleY, centerOps.Y.H2Interior, relativeOps.Y.AabsLF, relativeOps.Y.betaLF);
 end
-operatorParts = addOperatorPart(operatorParts, 'Y physical boundary characteristic penalty', ...
-    scaleY, centerOps.Y.H2Boundary, relativeOps.Y.AabsChar);
+if ~strcmp(yBoundaryType, 'hard-wall')
+    operatorParts = addOperatorPart(operatorParts, 'Y physical boundary characteristic penalty', ...
+        scaleY, centerOps.Y.H2Boundary, relativeOps.Y.AabsChar);
+end
 if strcmp(yBoundaryType, 'specular')
     operatorParts = addYReflection(operatorParts, boundary.physical.YBottom, ...
         centerOps.Y.bottomLift, relativeOps.Y.AplusChar, -scaleY);
@@ -159,6 +165,7 @@ info.fluxTypeX = xFluxType;
 info.fluxTypeY = yFluxType;
 info.fluxTypeByAxis = struct('X', xFluxType, 'Y', yFluxType);
 info.yBoundaryType = yBoundaryType;
+info.hardWallClosureDeferred = strcmp(yBoundaryType,'hard-wall') && ~closeHardWall;
 info.dofOrder = p.index.order;
 info.totalDof = p.index.nTotal;
 info.centerDof = p.dg.nCenterDof;
@@ -188,6 +195,9 @@ info.getRowAbsSum = @() assembleKronRowAbsSum(operatorParts, ...
     p.dg.nCenterDof, p.relative.nDof);
 info.getRelativeBlockData = @() makeRelativeBlockData(operatorParts, ...
     p.dg.nCenterDof, p.relative.nDof);
+if closeHardWall && strcmp(yBoundaryType, 'hard-wall')
+    [A, rhs, info] = constrain_HardWall_full2D(A, rhs, info, p);
+end
 end
 
 function axisOps = oneDimensionalDGOperators(axis)
@@ -569,6 +579,17 @@ blockData.note = ['Transport block c contains sum_i coeff_i*C_i(c,c)*R_i; ', ...
     'Block-Jacobi approximation.'];
 blockData.getBlock = @(centerId) relativeBlockFromParts(parts, ...
     centerId, nRelative);
+blockData.getCoupledBlock = @(rowId, colId) coupledBlockFromParts( ...
+    operatorParts, rowId, colId, nRelative);
+end
+
+function block = coupledBlockFromParts(parts, rowId, colId, nRelative)
+block = sparse(nRelative, nRelative);
+for ip = 1:numel(parts)
+    part = parts{ip};
+    block = block + part.coefficient*part.centerMatrix(rowId,colId) ...
+        *part.relativeMatrix;
+end
 end
 
 function block = relativeBlockFromParts(parts, centerId, nRelative)

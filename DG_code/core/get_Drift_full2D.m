@@ -522,12 +522,16 @@ blockData.nRelative = data.nRelative;
 blockData.nTotal = data.nTotal;
 blockData.mode = data.mode;
 blockData.getBlock = @(centerId) driftRelativeBlock(data, centerId);
+blockData.getCoupledBlock = @(rowId, colId) driftRelativeBlock(data, rowId, colId);
 blockData.note = ['Returns the center-block diagonal of the drift/CAP ', ...
     'operator. For fv-consistent potential discretization this includes ', ...
     'the sparse 3-by-3 relative-coordinate stencil.'];
 end
 
-function block = driftRelativeBlock(data, centerId)
+function block = driftRelativeBlock(data, centerId, columnId)
+if nargin < 3
+    columnId = centerId;
+end
 if centerId < 1 || centerId > data.nCenter || centerId ~= round(centerId)
     error('DG:Full2D:InvalidCenterBlock', ...
         'Center block index must be an integer in [1,%d].', data.nCenter);
@@ -535,22 +539,34 @@ end
 
 switch data.mode
     case 'collocated'
+        if centerId ~= columnId
+            block = sparse(data.nRelative,data.nRelative);
+            return
+        end
         first = (centerId-1)*data.nRelative + 1;
         ids = first:first+data.nRelative-1;
         diagonal = collocatedDiagonalChunk(data, ids(:));
         block = spdiags(diagonal, 0, data.nRelative, data.nRelative);
     case 'fv-consistent'
         element = data.centerElementId(centerId);
+        if element ~= data.centerElementId(columnId)
+            block = sparse(data.nRelative,data.nRelative);
+            return
+        end
         localId = data.centerLocalId(centerId);
+        columnLocalId = data.centerLocalId(columnId);
         deltaV = potentialDifferenceForElements(data, element);
-        vertexPotential = deltaV ...
-            * data.centerDiagonalWeights(:, localId);
+        weights = data.centerProjection(:,localId) ...
+            .*data.centerInterpolation(:,columnLocalId);
+        vertexPotential = deltaV*weights;
         block = data.potentialCoefficient*data.relativeNormalization ...
             * (data.relativeProjection' ...
             * spdiags(vertexPotential, 0, data.nRelativeVertices, ...
             data.nRelativeVertices) * data.relativeProjection);
-        block = block + spdiags(data.capCoefficient*data.capProfile, ...
-            0, data.nRelative, data.nRelative);
+        if centerId == columnId
+            block = block + spdiags(data.capCoefficient*data.capProfile, ...
+                0, data.nRelative, data.nRelative);
+        end
 end
 block = sparse(block);
 end

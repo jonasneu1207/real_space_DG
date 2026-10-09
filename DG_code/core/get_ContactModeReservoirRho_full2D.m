@@ -22,6 +22,8 @@ function [rhoBoundary, info] = get_ContactModeReservoirRho_full2D(mat, p, sideNa
 % Mode sampling includes zero-valued ghost nodes one Hamiltonian grid step
 % outside each material Y edge. This continues the endpoint amplitudes
 % continuously to the existing discrete Dirichlet closure.
+% Exception: full2D_Y_boundary='hard-wall' eliminates the physical endpoint
+% unknowns from H and sets the modes to zero AT the material/DG Y edges.
 %
 % Relative-vector order follows the rest of the Full-2D code:
 %   rho_x is fastest, then rho_y. The returned array therefore has size
@@ -39,7 +41,7 @@ degFactor = readDegeneracy(mat);
 [contact, contactInfo] = contactProblem(mat, p, sideName, Vxy);
 nModes = contactModeCount(mat, params, contact.nGrid);
 [modeEnergy, modeVector, modeNormalization] = solveContactModes( ...
-    contact.H, nModes, contact.gridY);
+    contact.H, nModes, contact.gridY, contact.activeIds);
 
 modeMassX = modeAveragedMass(modeVector, contact.mXRelative, ...
     readField(mat, 'me_x_ch', 0.041), constants, contact.gridY);
@@ -88,7 +90,7 @@ for im = 1:nModes
     rhoXMode = transformLongitudinalMode(cosX, kx, dkx, modeEnergy(im), ...
         modeMassX(im), modeMassZ(im), EfUsed, temp, degFactor, constants, kzInfo);
     rhoYMode = transverseModeDensity(modeVector(:, im), ...
-        contact.gridY, yFace, p.relative.rhoY.cells(:));
+        contact.gridY, yFace, p.relative.rhoY.cells(:), contact.hardWall);
 
     rhoXModes(:, im) = rhoXMode;
     transverseNormByMode(im) = norm(rhoYMode, 'fro');
@@ -145,6 +147,18 @@ mXRelative = sanitizeRelativeMass(mXfield(sideIndex, sortIds).', readField(mat, 
 mZRelative = sanitizeRelativeMass(mZfield(sideIndex, sortIds).', readField(mat, 'me_z_ch', readField(mat, 'me_x_ch', 0.041)));
 
 H = transverseHamiltonian(gridY, Vedge, mYRelative);
+hardWall = strcmp(get_YBoundaryType_full2D(mat), 'hard-wall');
+activeIds = (1:numel(gridY)).';
+if hardWall
+    % Actual physical wall locations, not the legacy exterior ghost nodes.
+    tolerance = 64*eps(max(abs(gridY)));
+    if max(abs(gridY([1,end]).'-p.domain.Y)) > tolerance
+        error('DG:Full2D:HardWallContactDomainMismatch', ...
+            'Hard-wall contact modes require the material and DG Y bounds to agree.');
+    end
+    activeIds = (2:numel(gridY)-1).';
+    H = H(activeIds,activeIds);
+end
 
 contact = struct;
 contact.H = H;
@@ -153,7 +167,9 @@ contact.Vedge = Vedge;
 contact.mYRelative = mYRelative;
 contact.mXRelative = mXRelative;
 contact.mZRelative = mZRelative;
-contact.nGrid = numel(gridY);
+contact.nGrid = size(H,1);
+contact.activeIds = activeIds;
+contact.hardWall = hardWall;
 
 info = struct;
 info.side = sideName;
@@ -172,6 +188,13 @@ info.modeExtensionNote = ['Modes are interpolated to zero ghost nodes one ', ...
     'Hamiltonian grid step outside each material Y edge, and are zero ', ...
     'beyond them. Mode normalization and neutrality use the material ', ...
     'Y interval.'];
+if hardWall
+    info.modeExtension = 'dirichlet-at-physical-y-walls';
+    info.modeZeroBoundaryY = p.domain.Y;
+    info.modeExtensionNote = ['Only interior material-grid unknowns enter ', ...
+        'the eigenproblem. Endpoint amplitudes are exactly zero at the ', ...
+        'physical walls; interpolation and normalization include these zeros.'];
+end
 info.note = ['The transverse contact Hamiltonian is built on the material ', ...
     'Y grid at the selected Source/Drain X edge.'];
 end
@@ -204,7 +227,7 @@ vv = [leftValue; centerValue; rightValue; ...
 H = sparse(ii, jj, vv, nY, nY);
 end
 
-function [modeEnergy, modeVector, normInfo] = solveContactModes(H, nModes, gridY)
+function [modeEnergy, modeVector, normInfo] = solveContactModes(H, nModes, gridY, activeIds)
 nGrid = size(H, 1);
 if nModes >= nGrid
     [V, E] = eig(full(H));
@@ -218,7 +241,8 @@ end
 
 modeEnergy = real(diag(E));
 [modeEnergy, ids] = sort(modeEnergy, 'ascend');
-modeVector = real(V(:, ids(1:nModes)));
+modeVector = zeros(numel(gridY), nModes);
+modeVector(activeIds,:) = real(V(:, ids(1:nModes)));
 modeEnergy = modeEnergy(1:nModes);
 
 weights = quadratureWeights(gridY);
@@ -287,11 +311,15 @@ end
 density = sum(densityByMode);
 end
 
-function rhoYMode = transverseModeDensity(modeVector, gridY, yFace, rhoY)
+function rhoYMode = transverseModeDensity(modeVector, gridY, yFace, rhoY, hardWall)
 % Retain the zero ghost values implicit in the contact Hamiltonian. Direct
 % zero extrapolation from gridY would cut off nonzero endpoint amplitudes.
 modeGrid = contactModeGridWithGhosts(gridY);
 modeWithGhosts = [0;modeVector(:);0];
+if hardWall
+    modeGrid = gridY;
+    modeWithGhosts = modeVector(:);
+end
 rhoYMode = zeros(numel(rhoY), numel(yFace));
 for iy = 1:numel(yFace)
     yPlus = yFace(iy) + 0.5*rhoY;
