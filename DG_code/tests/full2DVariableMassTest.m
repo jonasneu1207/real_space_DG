@@ -13,6 +13,14 @@ classdef full2DVariableMassTest < matlab.unittest.TestCase
     end
 
     methods (Test)
+        function massXExtensionMatchesExplicitConstantPadding(testCase)
+            verifyMassExtensionAgainstPadding(testCase, 'X');
+        end
+
+        function massYExtensionMatchesExplicitConstantPadding(testCase)
+            verifyMassExtensionAgainstPadding(testCase, 'Y');
+        end
+
         function constantMassRecoversExistingTransport(testCase)
             mat = makeVariableMassMat(false);
             p = initParams_full2D(mat, mat.V, 0.2, 0.1);
@@ -135,6 +143,46 @@ classdef full2DVariableMassTest < matlab.unittest.TestCase
                 diff(info.currentScale.inverseRelativeMassYRange), 0);
         end
     end
+end
+
+function verifyMassExtensionAgainstPadding(testCase, axisName)
+mat = makeVariableMassMat(true);
+if strcmp(axisName, 'X')
+    mat.me_y(:) = mat.me_y_ch;
+else
+    mat.me_x(:) = mat.me_x_ch;
+end
+p = initParams_full2D(mat, mat.V, 0.2, 0.1);
+boundary = get_Boundary_full2D(mat, p, 0.2, 0.1, mat.V);
+[A, rhs, info] = get_Diff_variableMass_full2D(mat, p, boundary);
+
+% Enlarge only the coefficient sampling grid. Every endpoint query then
+% lies inside a grid with explicitly constant continuation of edge values.
+% Keeping p and boundary fixed isolates the mass extension from DG geometry
+% and contact-reservoir changes.
+padded = mat;
+padded.x = [mat.x(1)-1, mat.x, mat.x(end)+1];
+padded.y = [mat.y(1)-1, mat.y, mat.y(end)+1];
+padded.Nx = numel(padded.x);
+padded.Ny = numel(padded.y);
+padded.me_x = padBoundaryValues(squeeze(mat.me_x));
+padded.me_y = padBoundaryValues(squeeze(mat.me_y));
+[AReference, rhsReference, referenceInfo] = ...
+    get_Diff_variableMass_full2D(padded, p, boundary);
+u = deterministicVector(p.index.nTotal);
+
+testCase.verifyLessThan(norm(A-AReference, 'fro') ...
+    /max(norm(AReference, 'fro'), eps), 2e-12);
+verifyRelativeSmall(testCase, info.apply(u)-AReference*u, ...
+    AReference*u, 2e-12);
+testCase.verifyEqual(rhs, rhsReference, AbsTol=1e-13);
+testCase.verifyEqual(info.mass.(axisName).maxOuterXFaceCorrection, ...
+    referenceInfo.mass.(axisName).maxOuterXFaceCorrection, AbsTol=1e-12);
+end
+
+function padded = padBoundaryValues(field)
+xPadded = [field(1, :); field; field(end, :)];
+padded = [xPadded(:, 1), xPadded, xPadded(:, end)];
 end
 
 function setup = buildVariableMassSetup()
