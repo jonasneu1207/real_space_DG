@@ -310,7 +310,11 @@ classdef full2DDriftSystemSolveTest < matlab.unittest.TestCase
             testCase.verifyEqual(DG.info.solve.preconditioner.nBlocks, ...
                 DG.p.dg.nCenterDof);
             testCase.verifyNotEmpty(DG.rho);
-            testCase.verifyEqual(DG.info.solve.flag, 0);
+            % MATLAB's left-preconditioned stopping norm can meet tol while
+            % the true residual does not. Retain the Krylov result separately.
+            testCase.verifyEqual(DG.info.solve.krylovFlag, 0);
+            testCase.verifyEqual(DG.info.solve.flag, ...
+                double(DG.info.solve.trueRelres > mat.dg.params.full2D_solverTol));
             testCase.verifyTrue(isfinite(DG.info.solve.relres));
             testCase.verifyLessThan(residual, 1e-7);
         end

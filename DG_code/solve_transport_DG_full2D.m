@@ -50,7 +50,7 @@ end
 
 p = initParams_full2D(mat, Vxy, EfL, EfR);
 [A, rhs, sysInfo] = get_SysM_full2D(mat, p, Vxy, EfL, EfR);
-[rho, solveInfo, A, rhs] = solveStationarySystem(A, rhs, sysInfo, mat, p);
+[rho, solveInfo, A, rhs] = solveStationarySystem(A, rhs, sysInfo, mat, p, Vxy);
 
 DG = struct;
 DG.status = solveInfo.status;
@@ -114,7 +114,7 @@ else
 end
 end
 
-function [rho, solveInfo, A, rhs] = solveStationarySystem(A, rhs, sysInfo, mat, p)
+function [rho, solveInfo, A, rhs] = solveStationarySystem(A, rhs, sysInfo, mat, p, Vxy)
 params = getDGParams(mat);
 nTotal = p.index.nTotal;
 mode = readParam(params, 'full2D_solve', 'auto');
@@ -160,8 +160,31 @@ if useGPU && strcmp(solverName, 'direct')
         ['full2D_gpu=true supports full2D_solver=''bicgstab'' or ', ...
          '''gmres''. Select one of these matrix-free Krylov solvers.']);
 end
+setupTimer = tic;
+if strcmp(solverName,'gmres') && strcmpi(char(readParam(params, ...
+        'full2D_preconditioner','auto')),'line-transverse')
+    plannedRestart = readParam(params,'full2D_gmresRestart', ...
+        readParam(params,'full2D_gpuGmresRestart',20));
+    plannedBasis = min(plannedRestart,nTotal)+1;
+    if isempty(plannedRestart)
+        plannedBasis = min(solveInfo.maxIterations,nTotal)+1;
+    end
+    solveInfo.gmresBasisBytesEstimate = 16*nTotal*plannedBasis;
+    defaultBasisLimit = Inf;
+    if useGPU
+        defaultBasisLimit = 4*1024^3;
+    end
+    basisLimit = readParam(params,'full2D_gmresMaxBasisBytes',defaultBasisLimit);
+    if solveInfo.gmresBasisBytesEstimate > basisLimit
+        error('DG:Full2D:GmresMemoryLimit', ...
+            ['Estimated GMRES basis %.3g GiB exceeds full2D_gmresMaxBasisBytes. ', ...
+             'Reduce restart or explicitly increase the memory budget.'], ...
+            solveInfo.gmresBasisBytesEstimate/1024^3);
+    end
+end
 preconditioner = buildPreconditioner(sysInfo, params, solverName, ...
-    nTotal, useGPU);
+    nTotal, useGPU, mat, p, Vxy);
+solveInfo.preconditionerSetupSeconds = toc(setupTimer);
 solveInfo.preconditioner = preconditioner.info;
 
 if strcmp(solverName, 'direct') && isempty(A)
@@ -182,8 +205,13 @@ end
 applyA = [];
 rhsSolve = rhs;
 if any(strcmp(solverName, {'bicgstab', 'gmres'}))
+    preparationTimer = tic;
     [applyA, rhsSolve, solveInfo.gpu] = prepareKrylovExecution( ...
         sysInfo, rhs, useGPU);
+    if useGPU
+        wait(gpuDevice);
+    end
+    solveInfo.krylovPreparationSeconds = toc(preparationTimer);
 end
 %%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -233,14 +261,46 @@ switch solverName
         if useGPU
             restartDefault = readParam(params, ...
                 'full2D_gpuGmresRestart', 20);
+        elseif strcmp(preconditioner.info.method, 'line-transverse')
+            restartDefault = 20;
         else
             restartDefault = [];
         end
         restart = readParam(params, 'full2D_gmresRestart', restartDefault);
         solveInfo.gpu.gmresRestart = restart;
+        sideDefault = 'left';
+        if strcmp(preconditioner.info.method, 'line-transverse')
+            sideDefault = 'right';
+        end
+        side = lower(char(readParam(params, 'full2D_preconditionerSide', sideDefault)));
+        if ~any(strcmp(side, {'left','right'}))
+            error('DG:Full2D:PreconditionerSide', 'Use left or right preconditioning.');
+        end
+        solveInfo.preconditionerSide = side;
+        rhsNorm = gatherIfGPU(norm(rhsSolve));
+        rhsScale = max(rhsNorm, realmin);
+        iterationTimer = tic;
         [rho, flag, relres, iter, resvec, progressInfo] = ...
-            runGmresWithProgress(applyA, rhsSolve, preconditioner, restart, ...
-            solveInfo.tolerance, solveInfo.maxIterations, nTotal, params);
+            runGmresWithProgress(applyA, rhsSolve/rhsScale, preconditioner, restart, ...
+            solveInfo.tolerance, solveInfo.maxIterations, nTotal, params, side);
+        % Check the ORIGINAL equation, independently of MATLAB's potentially
+        % left-preconditioned stopping norm. Work in normalized units to avoid
+        % huge physical RHS magnitudes in residual arithmetic.
+        trueRelres = gatherIfGPU(norm(applyA(rho)-rhsSolve/rhsScale));
+        solveInfo.reportedRelres = relres;
+        solveInfo.trueRelres = trueRelres;
+        solveInfo.krylovFlag = flag;
+        if flag == 0 && (~isfinite(trueRelres) || trueRelres > solveInfo.tolerance)
+            flag = 1;
+        end
+        progressInfo.finalFlag = flag;
+        progressInfo.finalRelres = trueRelres;
+        rho = rho*rhsScale;
+        resvec = resvec*rhsScale;
+        relres = trueRelres;
+        solveInfo.iterationSeconds = toc(iterationTimer);
+        solveInfo.totalSolveSeconds = solveInfo.preconditionerSetupSeconds ...
+            + solveInfo.krylovPreparationSeconds + solveInfo.iterationSeconds;
         solveInfo.status = iterativeStatus('gmres', flag);
         solveInfo.flag = flag;
         solveInfo.relres = relres;
@@ -336,7 +396,7 @@ end
 
 function [x, flag, relres, iter, resvec, progressInfo] = ...
         runGmresWithProgress(applyA, rhs, preconditioner, restart, ...
-        tolerance, maxIterations, nTotal, params)
+        tolerance, maxIterations, nTotal, params, side)
 %RUNGMRESWITHPROGRESS Run GMRES and monitor inner Krylov iterations.
 %
 % With restart=[], MATLAB interprets maxIterations as the maximum number of
@@ -348,7 +408,17 @@ progress = createKrylovProgress(params, 'gmres', maxIterations, restart, ...
     nTotal, '');
 cleanupProgress = onCleanup(@() progress.close());
 
-if progress.enabled
+if strcmp(side, 'right') && preconditioner.enabled
+    if progress.enabled
+        inverseM = @(r) progress.applyPreconditioner(preconditioner.apply,r);
+        rightA = @(u) progress.applyOperator(applyA,inverseM(u));
+    else
+        rightA = @(u) applyA(preconditioner.apply(u));
+    end
+    [z, flag, relres, iter, resvec] = gmres(rightA, rhs, restart, ...
+        tolerance, maxIterations);
+    x = preconditioner.apply(z);
+elseif progress.enabled
     monitoredA = @(u) progress.applyOperator(applyA, u);
     monitoredM = @(r) progress.applyPreconditioner( ...
         preconditioner.apply, r);
@@ -617,7 +687,7 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%
 function preconditioner = buildPreconditioner(sysInfo, params, solverName, ...
-        nTotal, useGPU)
+        nTotal, useGPU, mat, p, Vxy)
 %BUILDPRECONDITIONER Build a matrix-free left preconditioner for Krylov.
 %
 % The basic Full-2D preconditioner is Jacobi:
@@ -658,6 +728,10 @@ if strcmp(solverName, 'direct')
 end
 
 switch mode
+    case 'line-transverse'
+        preconditioner = get_LineTransversePreconditioner_full2D( ...
+            mat, p, Vxy, sysInfo, useGPU);
+        return
     case {'none', 'off', 'false', 'no'}
         preconditioner.info.reason = 'Preconditioner disabled by full2D_preconditioner.';
         return
@@ -688,7 +762,7 @@ switch mode
     otherwise
         error('DG:Full2D:UnknownPreconditioner', ...
             ['Unknown full2D_preconditioner "%s". Use auto, none, ', ...
-             'jacobi, diagonal, rowabs or blockjacobi.'], mode);
+             'jacobi, diagonal, rowabs, blockjacobi or line-transverse.'], mode);
 end
 
 if ~useJacobi

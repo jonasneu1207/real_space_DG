@@ -48,6 +48,7 @@ switch device
         me_z_ox = 0.041; %0.5;
         
         Xi = 4.5; % affinity of the channel GaInAs
+        
         phi_m_g = 4.74; % metal work function of the Ag-gate contact
         
         dEc = 0.4;
