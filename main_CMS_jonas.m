@@ -14,7 +14,7 @@ simulation = 'self-consistent';% 'transient', 'self-consistent'
 
 %mat.n_of_modes      = 3;   % 1,2,3,...
 % DEVICE PARAMETERS
-dx      = 0.50; %0,25 %Mind the following condition for DG: (Nx-1)/2 has to be even
+dx      = 0.25; %0,25 %Mind the following condition for DG: (Nx-1)/2 has to be even
 dy      = 0.25; %0,25
 dz      = 0.25;
 
@@ -175,7 +175,7 @@ mat.dg.params.full2D_thetaLF_Y = 0.01;
 mat.dg.params.full2D_thetaLF_X = 0.1;
 mat.dg.params.full2D_X_flux = 'upwind';                    % full2D X interior faces: 'upwind', 'rusanov' or 'central'; characteristic Source/Drain flux remains active for all choices
 mat.dg.params.full2D_Y_flux = 'upwind';                    % full2D Y interior faces: 'upwind', 'rusanov' or 'central'; overrides rho_flux only in Y
-mat.dg.params.full2D_Y_boundary = 'hard-wall';              % physical Y walls: 'hard-wall' (two-point Dirichlet), 'zero-inflow' or 'specular'
+mat.dg.params.full2D_Y_boundary = 'zero-inflow';              % physical Y walls: 'hard-wall' (two-point Dirichlet), 'zero-inflow' or 'specular'
 mat.dg.params.full2D_potentialDiscretization = 'fv-consistent'; % 'fv-consistent': 1D-rho-like FV stencil; 'collocated': legacy diagonal prototype
 mat.dg.params.full2D_potentialQuadratureOrder = 5;           % tensor-product Gauss-Lobatto points per X/Y DG element axis
 mat.dg.params.full2D_massModel = 'position-dependent';       % 'constant': previous scalar masses; 'position-dependent': quadrature-projected endpoint BenDaniel-Duke operator from mat.me_x/me_y
@@ -215,7 +215,7 @@ mat.dg.params.Ly             = 160e-9;
 mat.dg.params.N_K_X = mat.dg.params.N_K_chi;                % full2D: local DG nodes in X on rectangular elements
 mat.dg.params.N_K_Y = mat.dg.params.N_K_chi;                % full2D: local DG nodes in Y on rectangular elements
 mat.dg.params.N_rho_x = mat.dg.params.N_xi/2;                 % full2D: FV cells in rho_x
-mat.dg.params.N_rho_y = 41; %mat.dg.params.N_xi/2;                 % full2D: FV cells in rho_y
+mat.dg.params.N_rho_y = 21; %mat.dg.params.N_xi/2;                 % full2D: FV cells in rho_y
 mat.dg.params.L_rho_x = mat.dg.params.Ly/2;                   % full2D: rho_x interval length
 mat.dg.params.L_rho_y = mat.dg.params.Ly/16;                  % full2D: rho_y interval length
 
