@@ -95,6 +95,9 @@ if isempty(rho)
 end
 
 [n, jx, jy, observableInfo] = get_Observables_full2D(rho, p, mat);
+if p.periodicY.enabled
+    DG.info.solve.periodicYStateError = get_PeriodicYStateError_full2D(rho,p);
+end
 DG.n = n;
 DG.jx = jx;
 DG.jy = jy;

@@ -11,6 +11,9 @@ function cap = get_CAP_full2D(p)
 
 Wx = get_CAP(p.relative.rhoX.cells, p.relative.rhoX.length, p.relative.rhoX.delta);
 Wy = get_CAP(p.relative.rhoY.cells, p.relative.rhoY.length, p.relative.rhoY.delta);
+if isfield(p.relative.rhoY,'periodic') && p.relative.rhoY.periodic
+    Wy(:) = 0; % A periodic coherence coordinate has no absorbing edge.
+end
 Wx = Wx(:);
 Wy = Wy(:);
 

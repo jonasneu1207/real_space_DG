@@ -149,6 +149,7 @@ data.potential = griddedInterpolant({gridX(:), gridY(:)}, Vfield, ...
     'linear', 'nearest');
 data.potentialXRange = [gridX(1), gridX(end)];
 data.potentialYRange = [gridY(1), gridY(end)];
+data.periodicY = isfield(p,'periodicY') && p.periodicY.enabled;
 
 data.Qdrift = readParam(params, 'full2D_Q_drift', Qdefault);
 data.driftScale = readParam(params, 'full2D_drift_scale', 1);
@@ -175,12 +176,18 @@ nx = p.relative.NrhoX;
 ny = p.relative.NrhoY;
 Ex = spdiags(ones(nx+1, 1)*[1, 1], [-1, 0], nx+1, nx);
 Ey = spdiags(ones(ny+1, 1)*[1, 1], [-1, 0], ny+1, ny);
+rhoEdgesY = p.relative.rhoY.edges;
+if data.periodicY
+    % Unique periodic vertices: seam contributions enter exactly once.
+    Ey = speye(ny) + sparse(1:ny,[ny,1:ny-1],1,ny,ny);
+    rhoEdgesY = rhoEdgesY(1:end-1);
+end
 data.relativeProjection = sparse(kron(Ey, Ex));
 data.relativeNormalization = 1/16;
 data.relativeVertexDegree = full(data.relativeProjection*ones(data.nRelative, 1));
 
 [rhoVertexX, rhoVertexY] = ndgrid( ...
-    p.relative.rhoX.edges, p.relative.rhoY.edges);
+    p.relative.rhoX.edges, rhoEdgesY);
 data.relativeVertexX = rhoVertexX(:);
 data.relativeVertexY = rhoVertexY(:);
 data.nRelativeVertices = numel(data.relativeVertexX);
@@ -641,15 +648,20 @@ deltaV = Vplus - Vminus;
 end
 
 function values = evaluateExtendedPotential(data, queryX, queryY)
-%EVALUATEEXTENDEDPOTENTIAL Constant extension in each coordinate.
+%EVALUATEEXTENDEDPOTENTIAL Clamp X; clamp or periodically wrap Y.
 %
 % Clamp X and Y independently before interpolation. In particular, a
 % query outside the X range retains its tangential Y coordinate instead of
 % selecting the nearest two-dimensional material-grid point.
 queryX = min(max(queryX, data.potentialXRange(1)), ...
     data.potentialXRange(2));
-queryY = min(max(queryY, data.potentialYRange(1)), ...
-    data.potentialYRange(2));
+if data.periodicY
+    queryY = data.potentialYRange(1) ...
+        + mod(queryY-data.potentialYRange(1),diff(data.potentialYRange));
+else
+    queryY = min(max(queryY, data.potentialYRange(1)), ...
+        data.potentialYRange(2));
+end
 values = data.potential(queryX, queryY);
 end
 
@@ -661,6 +673,12 @@ Vfield = fieldToXY(Vxy, mat);
 [gridX, ix] = sort(gridX(:));
 [gridY, iy] = sort(gridY(:));
 Vfield = full(Vfield(ix, iy));
+if isfield(p,'periodicY') && p.periodicY.enabled
+    if max(abs(Vfield(:,1)-Vfield(:,end))) > 1e-10*max(1,max(abs(Vfield(:))))
+        error('DG:Full2D:NonperiodicPotential', ...
+            'The first and last material Y columns must represent the same periodic potential.');
+    end
+end
 
 info = struct;
 info.size = size(Vfield);
@@ -672,6 +690,11 @@ info.note = ['Potential values are sampled at X +/- rho_x/2 and ', ...
     'Y +/- rho_y/2. Each query coordinate is clamped independently. ', ...
     'This gives a constant continuation normal to a boundary while ', ...
     'preserving the linearly interpolated tangential boundary profile.'];
+if isfield(p,'periodicY') && p.periodicY.enabled
+    info.interpolation = 'linear after X clamping and periodic Y wrapping';
+    info.note = ['Y +/- rho_y/2 is wrapped into the periodic material cell; ', ...
+        'X +/- rho_x/2 retains constant contact continuation.'];
+end
 end
 
 function Vfield = fieldToXY(field, mat)

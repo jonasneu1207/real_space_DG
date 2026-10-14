@@ -49,6 +49,10 @@ if nargin < 3 || isempty(boundary)
 end
 
 params = getDGParams(mat);
+if strcmp(get_YBoundaryType_full2D(mat),'periodic')
+    error('DG:Full2D:PeriodicVariableMassUnsupported', ...
+        'Periodic Y is currently validated for full2D_massModel=''constant'' only.');
+end
 referenceMassX = referenceMassRelative(mat, params, 'X');
 referenceMassY = referenceMassRelative(mat, params, 'Y');
 

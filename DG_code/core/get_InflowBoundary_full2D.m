@@ -22,6 +22,17 @@ sourceInfo.contactMask = sourceMaskInfo;
 drainInfo.contactMask = drainMaskInfo;
 sourceRho = applyContactMask(sourceRho, sourceMask);
 drainRho = applyContactMask(drainRho, drainMask);
+if strcmp(get_YBoundaryType_full2D(mat), 'periodic')
+    if ~all(sourceMask) || ~all(drainMask)
+        error('DG:Full2D:PeriodicContactMask', ...
+            'Periodic two-point contacts currently require full-width Source/Drain masks.');
+    end
+    if max(get_PeriodicYStateError_full2D(sourceRho,p), ...
+            get_PeriodicYStateError_full2D(drainRho,p)) > 1e-9
+        error('DG:Full2D:NonperiodicReservoir', ...
+            'Reservoirs must satisfy rho(Y+W/2,rho_y+W)=rho(Y,rho_y). Use contact-modes or compatible direct rho data.');
+    end
+end
 if strcmp(get_YBoundaryType_full2D(mat), 'hard-wall')
     wall = get_HardWallGeometry_full2D(p);
     faceMask = repelem(wall.active, p.relative.NrhoX, 1);

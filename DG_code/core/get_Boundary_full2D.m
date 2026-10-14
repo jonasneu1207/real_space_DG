@@ -4,7 +4,7 @@ function [boundary, info] = get_Boundary_full2D(mat, p, EfL, EfR, Vxy)
 % Implemented boundary types for the rectangular X-Y domain:
 %   X-left   Source characteristic inflow, outward normal (-1,0)
 %   X-right  Drain characteristic inflow, outward normal ( 1,0)
-%   Y-bottom/top: specular, zero-inflow, or two-point Dirichlet hard-wall.
+%   Y-bottom/top: specular, zero-inflow, two-point hard-wall, or periodic.
 %
 % In hard-wall mode the two-point Dirichlet constraints also take precedence
 % at X/Y corners. Other modes retain the adjacent-face contributions.
@@ -34,6 +34,11 @@ elseif strcmp(yBoundaryType, 'hard-wall')
     incomingState = 'rho = 0 if Y +/- rho_y/2 reaches either wall';
     boundary.physical.YBottom = rmfield(boundary.physical.YBottom,{'ghostOperator','R_y'});
     boundary.physical.YTop = rmfield(boundary.physical.YTop,{'ghostOperator','R_y'});
+elseif strcmp(yBoundaryType, 'periodic')
+    physicalYType = 'periodic-dg-interface';
+    incomingState = 'opposite Y-face trace, with the interior numerical flux';
+    boundary.physical.YBottom = rmfield(boundary.physical.YBottom,{'ghostOperator','R_y'});
+    boundary.physical.YTop = rmfield(boundary.physical.YTop,{'ghostOperator','R_y'});
 else
     physicalYType = 'characteristic-zero-inflow';
     incomingState = 'rho_in = 0; rho_out comes from the interior trace';
@@ -56,6 +61,7 @@ info.capNnz = nnz(cap.Crho);
 info.yBoundaryType = yBoundaryType;
 info.reflectionActive = strcmp(yBoundaryType, 'specular');
 info.hardWallActive = strcmp(yBoundaryType, 'hard-wall');
+info.periodicYActive = strcmp(yBoundaryType, 'periodic');
 info.reflectionNnz = info.reflectionActive*nnz(reflection.R_y);
 info.availableReflectionNnz = nnz(reflection.R_y);
 info.normalConvention = p.domain.normalConvention;
