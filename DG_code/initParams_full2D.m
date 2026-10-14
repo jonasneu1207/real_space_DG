@@ -62,9 +62,28 @@ N_rho_y = readFull2DParam(params, 'N_rho_y', N_rho_x);
 L_rho_default = readFull2DParam(params, 'Ly', max(abs(y(end)-y(1)), eps));
 L_rho_x = readFull2DParam(params, 'L_rho_x', L_rho_default);
 L_rho_y = readFull2DParam(params, 'L_rho_y', L_rho_default);
+periodicY = strcmp(get_YBoundaryType_full2D(mat), 'periodic');
+if periodicY
+    widthY = diff(p.domain.Y);
+    L_rho_y = readFull2DParam(params, 'L_rho_y', 2*widthY);
+    if abs(L_rho_y-2*widthY) > 1e-10*widthY
+        error('DG:Full2D:PeriodicRelativeLength', ...
+            'Periodic Y requires L_rho_y = 2*(Ymax-Ymin) in metres.');
+    end
+    if mod(p.dg.Y.nElements,2) ~= 0 || mod(N_rho_y,2) ~= 0 || N_rho_y < 4
+        error('DG:Full2D:PeriodicGrid', ...
+            'Periodic Y requires even N_el_Y and even N_rho_y >= 4 for the two-point half-period shift.');
+    end
+end
 
 p.relative.rhoX = makeFVRelativeAxis(N_rho_x, L_rho_x, 'rho_x');
 p.relative.rhoY = makeFVRelativeAxis(N_rho_y, L_rho_y, 'rho_y');
+p.relative.rhoY.periodic = periodicY;
+if periodicY
+    nr = N_rho_y;
+    p.relative.rhoY.D = p.relative.rhoY.D ...
+        + sparse([1,nr],[nr,1],[-1,1]/(2*p.relative.rhoY.delta),nr,nr);
+end
 p.relative.NrhoX = p.relative.rhoX.nCells;
 p.relative.NrhoY = p.relative.rhoY.nCells;
 p.relative.size = [p.relative.NrhoX, p.relative.NrhoY];
@@ -87,6 +106,13 @@ p.index.order = {'rho_x', 'rho_y', 'X-DG-DOF', 'Y-DG-DOF'};
 p.index.arraySize = [p.relative.size, p.dg.centerSize];
 p.index.nTotal = prod(p.index.arraySize);
 p.index.lift = @(OX, OY, ORX, ORY) kron(OY, kron(OX, kron(ORY, ORX)));
+p.periodicY.enabled = periodicY;
+if periodicY
+    p.periodicY.width = diff(p.domain.Y);
+    p.periodicY.centerShift = circshift(1:p.dg.Y.nDof, p.dg.Y.nDof/2);
+    p.periodicY.relativeShift = circshift(1:N_rho_y, N_rho_y/2);
+    p.periodicY.note = 'Physical states satisfy rho(Y+W/2,rho_y+W)=rho(Y,rho_y).';
+end
 end
 
 function value = readFull2DParam(params, name, defaultValue)

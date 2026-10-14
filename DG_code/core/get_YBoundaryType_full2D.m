@@ -10,6 +10,8 @@ function boundaryType = get_YBoundaryType_full2D(mat)
 %                not a Dirichlet-zero condition on the complete rho state.
 %   'hard-wall'  Homogeneous Dirichlet constraints whenever either endpoint
 %                Y +/- rho_y/2 reaches/leaves the physical Y interval.
+%   'periodic'   Period W in Y, period 2W in rho_y; both particle coordinates
+%                are periodic. See full2D_periodic_y.md for the double cover.
 
 value = 'specular';
 if isstruct(mat) && isfield(mat, 'dg') && isstruct(mat.dg) ...
@@ -36,9 +38,9 @@ elseif any(strcmp(boundaryType, {'hardwall', 'hard_wall', 'dirichlet'}))
     boundaryType = 'hard-wall';
 end
 
-if ~any(strcmp(boundaryType, {'specular', 'zero-inflow', 'hard-wall'}))
+if ~any(strcmp(boundaryType, {'specular', 'zero-inflow', 'hard-wall', 'periodic'}))
     error('DG:Full2D:UnknownYBoundaryType', ...
         ['Unknown full2D_Y_boundary "%s". Use "specular" or ', ...
-         '"zero-inflow" or "hard-wall".'], boundaryType);
+         '"zero-inflow", "hard-wall" or "periodic".'], boundaryType);
 end
 end

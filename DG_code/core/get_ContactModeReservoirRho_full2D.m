@@ -24,6 +24,8 @@ function [rhoBoundary, info] = get_ContactModeReservoirRho_full2D(mat, p, sideNa
 % continuously to the existing discrete Dirichlet closure.
 % Exception: full2D_Y_boundary='hard-wall' eliminates the physical endpoint
 % unknowns from H and sets the modes to zero AT the material/DG Y edges.
+% For 'periodic', Fourier-Galerkin contact modes replace the box eigenproblem
+% and are evaluated periodically at BOTH particle coordinates (constant mass).
 %
 % Relative-vector order follows the rest of the Full-2D code:
 %   rho_x is fastest, then rho_y. The returned array therefore has size
@@ -38,10 +40,17 @@ constants = physicalConstants;
 temp = readField(mat, 'Temp', 300);
 degFactor = readDegeneracy(mat);
 
-[contact, contactInfo] = contactProblem(mat, p, sideName, Vxy);
-nModes = contactModeCount(mat, params, contact.nGrid);
-[modeEnergy, modeVector, modeNormalization] = solveContactModes( ...
-    contact.H, nModes, contact.gridY, contact.activeIds);
+periodicY = strcmp(get_YBoundaryType_full2D(mat), 'periodic');
+if periodicY
+    [contact, contactInfo, modeEnergy, modeVector, modeNormalization] = ...
+        get_PeriodicContactModes_full2D(mat,p,sideName,Vxy);
+    nModes = numel(modeEnergy);
+else
+    [contact, contactInfo] = contactProblem(mat, p, sideName, Vxy);
+    nModes = contactModeCount(mat, params, contact.nGrid);
+    [modeEnergy, modeVector, modeNormalization] = solveContactModes( ...
+        contact.H, nModes, contact.gridY, contact.activeIds);
+end
 
 modeMassX = modeAveragedMass(modeVector, contact.mXRelative, ...
     readField(mat, 'me_x_ch', 0.041), constants, contact.gridY);
@@ -89,8 +98,18 @@ transverseNormByMode = zeros(nModes, 1);
 for im = 1:nModes
     rhoXMode = transformLongitudinalMode(cosX, kx, dkx, modeEnergy(im), ...
         modeMassX(im), modeMassZ(im), EfUsed, temp, degFactor, constants, kzInfo);
-    rhoYMode = transverseModeDensity(modeVector(:, im), ...
-        contact.gridY, yFace, p.relative.rhoY.cells(:), contact.hardWall);
+    if periodicY
+        yPlus = yFace.' + 0.5*p.relative.rhoY.cells(:);
+        yMinus = yFace.' - 0.5*p.relative.rhoY.cells(:);
+        phiPlus = exp(1i*(yPlus(:)-contact.gridY(1))*contact.waveNumbers) ...
+            *contact.coefficients(:,im)/sqrt(p.periodicY.width);
+        phiMinus = exp(1i*(yMinus(:)-contact.gridY(1))*contact.waveNumbers) ...
+            *contact.coefficients(:,im)/sqrt(p.periodicY.width);
+        rhoYMode = reshape(phiPlus.*conj(phiMinus),size(yPlus));
+    else
+        rhoYMode = transverseModeDensity(modeVector(:, im), ...
+            contact.gridY, yFace, p.relative.rhoY.cells(:), contact.hardWall);
+    end
 
     rhoXModes(:, im) = rhoXMode;
     transverseNormByMode(im) = norm(rhoYMode, 'fro');

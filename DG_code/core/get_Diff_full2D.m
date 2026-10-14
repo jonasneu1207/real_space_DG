@@ -64,6 +64,9 @@ yBoundaryType = get_YBoundaryType_full2D(mat);
 
 axisOpsX = oneDimensionalDGOperators(p.dg.X);
 axisOpsY = oneDimensionalDGOperators(p.dg.Y);
+if strcmp(yBoundaryType, 'periodic')
+    axisOpsY = close_PeriodicDGAxis_full2D(axisOpsY);
+end
 centerOps = liftCenterOperators(p, axisOpsX, axisOpsY);
 relativeOps = relativeTransportOperators(p, params, xFluxType, yFluxType);
 [scaleX, scaleY, scaleInfo] = transportScales(mat, p, params);
@@ -131,7 +134,7 @@ else
     operatorParts = addInteriorRusanovPart(operatorParts, 'Y interior Rusanov', ...
         scaleY, centerOps.Y.H2Interior, relativeOps.Y.AabsLF, relativeOps.Y.betaLF);
 end
-if ~strcmp(yBoundaryType, 'hard-wall')
+if ~any(strcmp(yBoundaryType, {'hard-wall','periodic'}))
     operatorParts = addOperatorPart(operatorParts, 'Y physical boundary characteristic penalty', ...
         scaleY, centerOps.Y.H2Boundary, relativeOps.Y.AabsChar);
 end
