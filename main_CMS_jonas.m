@@ -14,7 +14,7 @@ simulation = 'self-consistent';% 'transient', 'self-consistent'
 
 %mat.n_of_modes      = 3;   % 1,2,3,...
 % DEVICE PARAMETERS
-dx      = 0.25; %0,25 %Mind the following condition for DG: (Nx-1)/2 has to be even
+dx      = 0.5; %0,25 %Mind the following condition for DG: (Nx-1)/2 has to be even
 dy      = 0.25; %0,25
 dz      = 0.25;
 
@@ -155,35 +155,33 @@ mat.dg.params.rho = true;
 mat.dg.params.full2D = true;                                % true: full 2D Wigner transport with DG in X/Y and FV in two relative coordinates
 %mat.dg.params.full2D_solve = 'direct';
 
-mat.dg.params.full2D_solver = 'bicgstab';        % für echten Block-Jacobi aktuell robuster
+mat.dg.params.full2D_solver = 'gmres';        % für echten Block-Jacobi aktuell robuster
 mat.dg.params.full2D_gpu = true;                % true: BICGSTAB/GMRES matrix-free auf der aktuell gewählten MATLAB-GPU
-mat.dg.params.full2D_gpuGmresRestart = 20;       % begrenzt die Anzahl gleichzeitig gespeicherter GMRES-Krylov-Vektoren auf der GPU
+mat.dg.params.full2D_gmresRestart = 30;       % begrenzt die Anzahl gleichzeitig gespeicherter GMRES-Krylov-Vektoren auf der GPU
 mat.dg.params.full2D_maxDirectSolveDof = 160000;
 mat.dg.params.full2D_maxAssembledDof = 160000;
-mat.dg.params.full2D_preconditioner = 'rowabs';             % Preconditioner for BICGSTAB or GMRES when trying to solve huge systems via matrix-free operators
+mat.dg.params.full2D_preconditionerSide = 'right';
+mat.dg.params.full2D_solverTol = 1e-3;
+mat.dg.params.full2D_solverMaxIt = 150;                             % Restart-Zyklen!
+mat.dg.params.full2D_preconditioner = 'line-transverse';             % Preconditioner for BICGSTAB or GMRES when trying to solve huge systems via matrix-free operators
 mat.dg.params.full2D_reservoirModel = 'contact-modes';    % 'contact-modes' vs 'material-default'
 mat.dg.params.full2D_contactModeFermiModel = 'contact-neutrality'; % contact-neutrality: solve Ef from the same contact modes and contact doping; 'external' uses supplied EfL/EfR
-mat.dg.params.full2D_solverMaxIt = 2000;
 mat.dg.params.full2D_sourceContactMask = true(mat.Ny,1);
 mat.dg.params.full2D_drainContactMask  = true(mat.Ny,1);
-% mat.dg.params.full2D_sourceContactMask(end,1) = false;
-% mat.dg.params.full2D_drainContactMask(end,1)  = false;
-% mat.dg.params.full2D_sourceContactMask(1,1) = false;
-% mat.dg.params.full2D_drainContactMask(1,1)  = false;
 mat.dg.params.full2D_maxAutoSolveDof   = 2e7;
-mat.dg.params.full2D_thetaLF_Y = 0.01;
+mat.dg.params.full2D_thetaLF_Y = 1.0;
 mat.dg.params.full2D_thetaLF_X = 0.1;
-mat.dg.params.full2D_X_flux = 'upwind';                    % full2D X interior faces: 'upwind', 'rusanov' or 'central'; characteristic Source/Drain flux remains active for all choices
-mat.dg.params.full2D_Y_flux = 'upwind';                    % full2D Y interior faces: 'upwind', 'rusanov' or 'central'; overrides rho_flux only in Y
+% mat.dg.params.full2D_X_flux = 'upwind';                    % full2D X interior faces: 'upwind', 'rusanov' or 'central'; characteristic Source/Drain flux remains active for all choices
+% mat.dg.params.full2D_Y_flux = 'upwind';                    % full2D Y interior faces: 'upwind', 'rusanov' or 'central'; overrides rho_flux only in Y
 mat.dg.params.full2D_Y_boundary = 'zero-inflow';              % physical Y walls: 'hard-wall' (two-point Dirichlet), 'zero-inflow' or 'specular'
 mat.dg.params.full2D_potentialDiscretization = 'fv-consistent'; % 'fv-consistent': 1D-rho-like FV stencil; 'collocated': legacy diagonal prototype
-mat.dg.params.full2D_potentialQuadratureOrder = 5;           % tensor-product Gauss-Lobatto points per X/Y DG element axis
+mat.dg.params.full2D_potentialQuadratureOrder = 10;           % tensor-product Gauss-Lobatto points per X/Y DG element axis
 mat.dg.params.full2D_massModel = 'position-dependent';       % 'constant': previous scalar masses; 'position-dependent': quadrature-projected endpoint BenDaniel-Duke operator from mat.me_x/me_y
 mat.dg.params.full2D_massQuadratureOrder = 5;                % tensor-product Gauss-Lobatto order for projecting 1/m(X +/- rho/2); defaults to the potential order when omitted
 % Optional scalar lead/reference masses for the characteristic contact flux:
 % mat.dg.params.full2D_referenceMassX = mat.me_x_ch;
 % mat.dg.params.full2D_referenceMassY = mat.me_y_ch;
-mat.dg.params.full2D_cap_scale = 1;
+mat.dg.params.full2D_cap_scale = 1.0;
 
 mat.dg.params.rho_flux = 'rusanov';                         % general rho flux; in full2D this controls X when full2D_Y_flux is set
 mat.dg.params.rho_diff_scale = 1;

@@ -172,7 +172,7 @@ if strcmp(solverName,'gmres') && strcmpi(char(readParam(params, ...
     solveInfo.gmresBasisBytesEstimate = 16*nTotal*plannedBasis;
     defaultBasisLimit = Inf;
     if useGPU
-        defaultBasisLimit = 4*1024^3;
+        defaultBasisLimit = 6*1024^3;
     end
     basisLimit = readParam(params,'full2D_gmresMaxBasisBytes',defaultBasisLimit);
     if solveInfo.gmresBasisBytesEstimate > basisLimit

@@ -145,6 +145,16 @@ Vedge = Vfield(sideIndex, sortIds).';
 mYRelative = sanitizeRelativeMass(mYfield(sideIndex, sortIds).', readField(mat, 'me_y_ch', 0.041));
 mXRelative = sanitizeRelativeMass(mXfield(sideIndex, sortIds).', readField(mat, 'me_x_ch', 0.041));
 mZRelative = sanitizeRelativeMass(mZfield(sideIndex, sortIds).', readField(mat, 'me_z_ch', readField(mat, 'me_x_ch', 0.041)));
+% %%
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% mYRelative(1:5)=0.5;
+% mYRelative(end-4:end)=0.5;
+% mXRelative(1:5)=0.5;
+% mXRelative(end-4:end)=0.5;
+% mZRelative(1:5)=0.5;
+% mZRelative(end-4:end)=0.5;
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% %%
 
 H = transverseHamiltonian(gridY, Vedge, mYRelative);
 hardWall = strcmp(get_YBoundaryType_full2D(mat), 'hard-wall');
