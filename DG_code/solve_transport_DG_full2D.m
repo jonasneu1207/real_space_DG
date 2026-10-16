@@ -1,4 +1,4 @@
-function DG = solve_transport_DG_full2D(mat, Vxy, EfL, EfR)
+function DG = solve_transport_DG_full2D(mat, Vxy, EfL, EfR, rho0)
 %SOLVE_TRANSPORT_DG_FULL2D Stationary Full-2D Wigner-DG/FV rho solver.
 %
 % Coordinates:
@@ -34,10 +34,21 @@ function DG = solve_transport_DG_full2D(mat, Vxy, EfL, EfR)
 %   a fully device-resident matrix-free operator. No automatic GPU check or
 %   device selection is performed. The selected/default MATLAB GPU is used,
 %   and the converged rho vector is gathered before observables are built.
+%
+% GMRES warm start:
+%   DG = solve_transport_DG_full2D(mat,Vxy,EfL,EfR,previousDG.rho)
+%   rho0 is an optional finite physical rho vector in the SAME grid/order,
+%   not a preconditioned or normalized vector. [] retains the zero start.
+%   Right preconditioning solves for a correction about rho0. The stopping
+%   tolerance and final true residual remain relative to the original RHS.
+%   A nonempty rho0 requires full2D_solver='gmres'. No grid transfer is done.
 
 solverDir = fileparts(mfilename('fullpath'));
 addpath(fullfile(solverDir, 'core'));
 
+if nargin < 5
+    rho0 = [];
+end
 if nargin < 4
     EfR = [];
 end
@@ -49,8 +60,9 @@ if nargin < 2 || isempty(Vxy)
 end
 
 p = initParams_full2D(mat, Vxy, EfL, EfR);
+rho0 = validateInitialRho(rho0,p.index.nTotal);
 [A, rhs, sysInfo] = get_SysM_full2D(mat, p, Vxy, EfL, EfR);
-[rho, solveInfo, A, rhs] = solveStationarySystem(A, rhs, sysInfo, mat, p, Vxy);
+[rho, solveInfo, A, rhs] = solveStationarySystem(A, rhs, sysInfo, mat, p, Vxy, rho0);
 
 DG = struct;
 DG.status = solveInfo.status;
@@ -117,7 +129,7 @@ else
 end
 end
 
-function [rho, solveInfo, A, rhs] = solveStationarySystem(A, rhs, sysInfo, mat, p, Vxy)
+function [rho, solveInfo, A, rhs] = solveStationarySystem(A, rhs, sysInfo, mat, p, Vxy, rho0)
 params = getDGParams(mat);
 nTotal = p.index.nTotal;
 mode = readParam(params, 'full2D_solve', 'auto');
@@ -152,6 +164,10 @@ if isempty(A) && nTotal > maxMatrixFreeSolveDof
 end
 
 solverName = chooseSolver(params, isempty(A), nTotal, useGPU);
+if ~isempty(rho0) && ~strcmp(solverName,'gmres')
+    error('DG:Full2D:InitialRhoSolver', ...
+        'A supplied rho0 currently requires full2D_solver=''gmres''.');
+end
 solveInfo.solver = solverName;
 solveInfo.gpu = struct( ...
     'requested', useGPU, ...
@@ -281,11 +297,17 @@ switch solverName
         end
         solveInfo.preconditionerSide = side;
         rhsNorm = gatherIfGPU(norm(rhsSolve));
-        rhsScale = max(rhsNorm, realmin);
+        rhsScale = rhsNorm;
+        if rhsScale == 0
+            rhsScale = 1; % homogeneous RHS: absolute true residual, no division by zero
+        end
+        initial = prepareGmresInitialGuess(rho0,rhsScale,useGPU);
         iterationTimer = tic;
-        [rho, flag, relres, iter, resvec, progressInfo] = ...
+        [rho, flag, relres, iter, resvec, progressInfo, initialInfo] = ...
             runGmresWithProgress(applyA, rhsSolve/rhsScale, preconditioner, restart, ...
-            solveInfo.tolerance, solveInfo.maxIterations, nTotal, params, side);
+            solveInfo.tolerance, solveInfo.maxIterations, nTotal, params, side, initial);
+        solveInfo.initialGuess = initialInfo;
+        solveInfo.rhsNormalization = rhsScale;
         % Check the ORIGINAL equation, independently of MATLAB's potentially
         % left-preconditioned stopping norm. Work in normalized units to avoid
         % huge physical RHS magnitudes in residual arithmetic.
@@ -397,9 +419,9 @@ progressInfo = progress.getInfo();
 clear cleanupProgress
 end
 
-function [x, flag, relres, iter, resvec, progressInfo] = ...
+function [x, flag, relres, iter, resvec, progressInfo, initialInfo] = ...
         runGmresWithProgress(applyA, rhs, preconditioner, restart, ...
-        tolerance, maxIterations, nTotal, params, side)
+        tolerance, maxIterations, nTotal, params, side, initial)
 %RUNGMRESWITHPROGRESS Run GMRES and monitor inner Krylov iterations.
 %
 % With restart=[], MATLAB interprets maxIterations as the maximum number of
@@ -411,28 +433,67 @@ progress = createKrylovProgress(params, 'gmres', maxIterations, restart, ...
     nTotal, '');
 cleanupProgress = onCleanup(@() progress.close());
 
-if strcmp(side, 'right') && preconditioner.enabled
+rhsNorm = gatherIfGPU(norm(rhs));
+residual = rhs;
+provided = ~isempty(initial);
+if provided
+    residual = rhs-applyA(initial);
+end
+initialNorm = gatherIfGPU(norm(residual));
+residualDenominator = rhsNorm;
+if residualDenominator == 0, residualDenominator = 1; end
+initialInfo = struct('provided',provided,'used',provided, ...
+    'basis','physical-rho','strategy','zero-start', ...
+    'initialTrueRelres',initialNorm/residualDenominator, ...
+    'convergedAtStart',false,'correctionTolerance',NaN);
+if provided
+    initialInfo.strategy = 'native-x0';
+end
+if rhsNorm == 0
+    % Match GMRES's homogeneous-system convention without scaling rho0 by realmin.
+    x = zeros(size(rhs),'like',rhs);
+    flag = 0; relres = 0; iter = [0,0]; resvec = 0;
+    initialInfo.used = false;
+    initialInfo.strategy = 'homogeneous-rhs-zero-solution';
+elseif provided && initialNorm <= tolerance*rhsNorm
+    x = initial;
+    flag = 0; relres = initialNorm/rhsNorm; iter = [0,0]; resvec = initialNorm;
+    initialInfo.convergedAtStart = true;
+elseif strcmp(side, 'right') && preconditioner.enabled
     if progress.enabled
         inverseM = @(r) progress.applyPreconditioner(preconditioner.apply,r);
         rightA = @(u) progress.applyOperator(applyA,inverseM(u));
     else
         rightA = @(u) applyA(preconditioner.apply(u));
     end
-    [z, flag, relres, iter, resvec] = gmres(rightA, rhs, restart, ...
-        tolerance, maxIterations);
+    correctionTol = tolerance;
+    if provided
+        % x0 is a PHYSICAL vector; it is not a guess for z=M*x.
+        % Solve A*M^-1*dz=b-A*x0, then x=x0+M^-1*dz. Scale the
+        % tolerance to keep the SAME absolute target tol*norm(b).
+        correctionTol = max(realmin,tolerance*rhsNorm/initialNorm);
+        initialInfo.strategy = 'right-preconditioned-correction';
+        initialInfo.correctionTolerance = correctionTol;
+    end
+    [z, flag, relres, iter, resvec] = gmres(rightA, residual, restart, ...
+        correctionTol, maxIterations);
     x = preconditioner.apply(z);
+    if provided
+        x = initial+x;
+        relres = relres*(initialNorm/rhsNorm);
+    end
 elseif progress.enabled
     monitoredA = @(u) progress.applyOperator(applyA, u);
     monitoredM = @(r) progress.applyPreconditioner( ...
         preconditioner.apply, r);
     [x, flag, relres, iter, resvec] = gmres(monitoredA, rhs, restart, ...
-        tolerance, maxIterations, monitoredM);
+        tolerance, maxIterations, monitoredM, [], initial);
 elseif preconditioner.enabled
     [x, flag, relres, iter, resvec] = gmres(applyA, rhs, restart, ...
-        tolerance, maxIterations, preconditioner.apply);
+        tolerance, maxIterations, preconditioner.apply, [], initial);
 else
     [x, flag, relres, iter, resvec] = gmres(applyA, rhs, restart, ...
-        tolerance, maxIterations);
+        tolerance, maxIterations, [], [], initial);
 end
 
 flag = gatherIfGPU(flag);
@@ -442,6 +503,41 @@ resvec = gatherIfGPU(resvec);
 progress.finish(iter, resvec, flag, relres);
 progressInfo = progress.getInfo();
 clear cleanupProgress
+end
+
+function rho0 = validateInitialRho(rho0,nTotal)
+% Validate before assembling the large operator; never reinterpret a 4-D array.
+if isempty(rho0)
+    rho0 = [];
+    return
+end
+type = class(rho0);
+if isa(rho0,'gpuArray')
+    type = classUnderlying(rho0);
+end
+if ~any(strcmp(type,{'single','double'})) || ~isvector(rho0) ...
+        || numel(rho0) ~= nTotal || issparse(rho0)
+    error('DG:Full2D:InvalidInitialRho', ...
+        'rho0 must be a full single/double vector with %d entries in rho_x,rho_y,X,Y order.',nTotal);
+end
+if ~gatherIfGPU(all(isfinite(rho0(:))))
+    error('DG:Full2D:InvalidInitialRho','rho0 must contain only finite values.');
+end
+rho0 = double(rho0(:)); % complex values are intentional; operator arithmetic is double
+end
+
+function initial = prepareGmresInitialGuess(rho0,rhsScale,useGPU)
+initial = rho0;
+if isempty(initial), return; end
+if useGPU
+    initial = gpuArray(initial);
+else
+    initial = gatherIfGPU(initial);
+end
+initial = initial/rhsScale;
+if ~gatherIfGPU(all(isfinite(initial)))
+    error('DG:Full2D:InitialRhoScaling','rho0 cannot be represented after RHS normalization.');
+end
 end
 
 function progress = createKrylovProgress(params, solverName, ...

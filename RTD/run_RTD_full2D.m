@@ -1,7 +1,8 @@
 function [results,mat] = run_RTD_full2D(options)
 %RUN_RTD_FULL2D Constant-mass RTD with periodic Y and open X contacts.
 % options: Ly,dy in nm, bias in V, removeBarriers (logical), dg (overrides).
-% Uses the existing solve_transport_DG_full2D; no self-consistent Poisson.
+% simulation='flatband' (default) or 'self-consistent'. The latter requires
+% options.selfConsistent.poissonStep: only loop scaffolding is implemented.
 if nargin < 1, options = struct; end
 rtdDir = fileparts(mfilename('fullpath'));
 originalPath = path;
@@ -43,7 +44,15 @@ for k = 1:numel(fields)
     params.(fields{k}) = overrides.(fields{k});
 end
 mat.dg.params = params;
-results = solve2D_rtd_stat_flatband('DG',mat);
+simulation = option(options,'simulation','flatband');
+switch lower(char(simulation))
+    case 'flatband'
+        results = solve2D_rtd_stat_flatband('DG',mat);
+    case 'self-consistent'
+        results = solve2D_rtd_self_consistent('DG',mat,option(options,'selfConsistent',struct));
+    otherwise
+        error('RTD:UnsupportedSimulation','Unknown simulation type: %s.',simulation);
+end
 results.mat = mat;
 end
 
