@@ -30,7 +30,7 @@ N_DD = length(V_DD);
 % flag to accelerate the wigner comutations massively -> only drift part is
 % re-computed to start the flag must be 0 it turns to 1 automatically!!!!
 % after the first iteration has been performed
-fastened_flag = 0;
+
 
 %% loop over applied biases
 
