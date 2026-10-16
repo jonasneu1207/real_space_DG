@@ -1,158 +1,111 @@
-function [Vbi, iter_err] = solve_Poisson(M, node_type, node_num, n, mat, Vbi, Vg_bias)
-% SOLVE_POISSON  One step of a 2D RTD Poisson solve.
-%
-% Inputs:
-%   M, node_type, node_num: returned by eval_Poisson(mat)
-%   n      : electron density [1/m^3], size [Nx, Ny]
-%   mat.N_d: donor density [1/cm^3], size [Nx, Ny]
-%   mat.N_a: acceptor density [1/cm^3] (optional)
-%   Vbi    : previous potential [V], size [Nx, Ny]
-%   Vg_bias: right-contact boundary value [V]
-%
-% Contact values by default: left x contact = 0 V,
-%                            right x contact = Vg_bias.
-% For arbitrary Dirichlet values, supply mat.Vbc [Nx, Ny] in volts.
-% The positions of Dirichlet nodes are defined by mat.boundary,
-% or (if missing) automatically by eval_Poisson at the two x contacts.
-%
-% The sign of the source term follows the ORIGINAL code:
-%     div(eps0*eps_r*grad(Vbi)) = q*(N_d - N_a - n)
-% If Vbi is instead the conventional electrostatic potential phi,
-% reverse the charge-source sign in BOTH branches below.
-%
-% Modes:
-%   'direct'         : linear Poisson solve at fixed n
-%   'newton-rhapson' : original spelling, Boltzmann-response Jacobian
-%   'newton-raphson' : corrected spelling, same calculation
-%
-% iter_err = Euclidean norm of change at free nodes [V].
-
-    q  = 1.602176634e-19;    % C
-    kB = 1.380649e-23;       % J/K
-
-    Nx = mat.Nx;
-    Ny = mat.Ny;
-    N  = Nx*Ny;
-
-    assert(isequal(size(M), [N, N]), 'M must have size [Nx*Ny, Nx*Ny].');
-    assert(isequal(size(n), [Nx, Ny]), 'n must have size [Nx, Ny].');
-    assert(isequal(size(Vbi), [Nx, Ny]), 'Vbi must have size [Nx, Ny].');
-    assert(all(isfinite(n(:))) && all(n(:) >= 0), ...
-        'n must contain nonnegative, finite electron densities in m^-3.');
-    assert(isfinite(Vg_bias) && isscalar(Vg_bias), ...
-        'Vg_bias must be a finite scalar [V].');
-
-    if isfield(mat, 'N_d')
-        Nd = mat.N_d;
-    elseif isfield(mat, 'Nd')
-        Nd = mat.Nd;  % backwards compatibility
-    else
-        error('solve_Poisson:MissingDoping', 'mat.N_d is required.');
-    end
-    assert(isequal(size(Nd), [Nx,Ny]), 'mat.N_d must be [Nx, Ny].');
-
-    if isfield(mat, 'N_a')
-        Na = mat.N_a;
-        assert(isequal(size(Na), [Nx,Ny]), 'mat.N_a must be [Nx, Ny].');
-    else
-        Na = zeros(Nx,Ny);
-    end
-
-    assert(all(isfinite(Nd(:))) && all(isfinite(Na(:))), ...
-        'Doping arrays must be finite.');
-    % Convert doping from cm^-3 to m^-3; n is already in m^-3.
-    Nnet = (Nd - Na) * 1e6;
-
-    % Both padded (old API) and nonpadded node arrays are accepted.
-    if isequal(size(node_num), [Nx+2, Ny+2]) && ...
-       isequal(size(node_type), [Nx+2, Ny+2])
-        ids   = node_num(2:Nx+1, 2:Ny+1);
-        types = node_type(2:Nx+1, 2:Ny+1);
-    elseif isequal(size(node_num), [Nx, Ny]) && ...
-           isequal(size(node_type), [Nx, Ny])
-        ids   = node_num;
-        types = node_type;
-    else
-        error('node_num and node_type have incompatible dimensions.');
-    end
-    assert(isequal(ids, reshape(1:N, Nx, Ny)), ...
-        ['Node numbering must follow MATLAB column-major order. ', ...
-         'Recompute [M,node_num,node_type] = eval_Poisson(mat).']);
-
-    free_nodes = ids(types == 1);
-    bnd_nodes  = ids(types == 2);
-    assert(numel(free_nodes)+numel(bnd_nodes) == N && ...
-           ~isempty(bnd_nodes), 'Invalid/free-floating node types.');
-
-    % Dirichlet values: applied voltage on right contact, left at ground.
-    if isfield(mat, 'Vbc') && ~isempty(mat.Vbc)
-        Vbc = mat.Vbc;
-        assert(isequal(size(Vbc), [Nx, Ny]), ...
-            'mat.Vbc must have size [Nx, Ny].');
-        assert(all(isfinite(Vbc(:))), 'mat.Vbc must contain finite values.');
-    else
-        Vbc = zeros(Nx, Ny);
-        Vbc(end,:) = Vg_bias;
-    end
-
-    % MATLAB (:) is consistent with numbering returned by eval_Poisson.
-    V_old = Vbi(:);
-    bc = Vbc(:);
-    charge = q*(Nnet(:) - n(:));
-
-    if isfield(mat, 'poisson') && isfield(mat.poisson, 'opt')
-        opt = mat.poisson.opt;
-    else
-        opt = struct();
-    end
-    if isfield(opt, 'alpha') && ~isempty(opt.alpha)
-        alpha = opt.alpha;
-    else
-        alpha = 1;
-    end
-    assert(isscalar(alpha) && isfinite(alpha) && alpha > 0 && alpha <= 1, ...
-        'mat.poisson.opt.alpha must lie in (0,1].');
-
-    if isfield(opt, 'solve') && ~isempty(opt.solve)
-        mode = lower(char(opt.solve));
-    else
-        mode = 'direct';
-    end
-
-    V_new = V_old;
-    V_new(bnd_nodes) = bc(bnd_nodes);  % enforce contact potentials exactly
-
-    switch mode
-        case 'direct'
-            % M_ff*V_f = charge_f - M_fb*V_b.
-            rhs = charge(free_nodes) ...
-                - M(free_nodes,bnd_nodes)*V_new(bnd_nodes);
-            V_target = M(free_nodes,free_nodes) \ rhs;
-            V_new(free_nodes) = V_old(free_nodes) ...
-                + alpha*(V_target - V_old(free_nodes));
-
-        case {'newton-rhapson', 'newton-raphson'}
-            % Original Jacobian assumes dn/dVbi = -q*n/(kB*T),
-            % i.e. Boltzmann electron response. This is NOT generally
-            % the derivative of a quantum-transport carrier density.
-            assert(isfield(mat, 'Temp') && isfinite(mat.Temp) && ...
-                   isscalar(mat.Temp) && mat.Temp > 0, ...
-                'mat.Temp must be positive for Newton-Raphson.');
-
-            V0 = V_old;
-            V0(bnd_nodes) = bc(bnd_nodes);
-            F = M*V0 - charge;
-            nf = numel(free_nodes);
-            Jff = M(free_nodes,free_nodes) ...
-                - spdiags(q^2*n(free_nodes)/(kB*mat.Temp), 0, nf, nf);
-            dVf = -Jff \ F(free_nodes);
-            V_new(free_nodes) = V0(free_nodes) + alpha*dVf;
-
-        otherwise
-            error('solve_Poisson:UnknownMethod', ...
-                'Unknown Poisson solver: %s', mode);
-    end
-
-    iter_err = norm(V_new(free_nodes) - V_old(free_nodes), 2);
-    Vbi = reshape(V_new, Nx, Ny);
+function [phi,iter_err,info] = solve_Poisson2D_rtd(M,node_type,node_num,n,mat,phi0,bias)
+%SOLVE_POISSON2D_RTD Electrostatic direct or approximate Newton update [V].
+% M approximates +div(epsilon*grad(phi)); hence M*phi=q*(n-Nd+Na).
+% n [m^-3] is a nodal-control-volume average on the material grid.
+% Nd/Na are SI; N_d/N_a are legacy cm^-3 (checked if both are present).
+% mat.poisson.opt.solve: 'direct' (default), 'newton-raphson', or legacy
+% 'newton-rhapson'. Newton is ONE approximate outer Newton step with
+% dn/dphi=q*n/(kB*T), NOT the full quantum-transport Jacobian.
+% opt.alpha damps the update (default 1); the coupled runner mixes externally.
+% info.converged means the LINEAR UPDATE was solved, not self-consistency.
+% physicalRelresBefore tests Poisson with the actual input transport density.
+arguments
+    M {mustBeFloat,mustBeReal,mustBeFinite}
+    node_type {mustBeNumeric,mustBeReal,mustBeFinite}
+    node_num {mustBeNumeric,mustBeReal,mustBeFinite}
+    n {mustBeFloat,mustBeReal,mustBeFinite,mustBeNonnegative}
+    mat (1,1) struct
+    phi0 {mustBeFloat,mustBeReal,mustBeFinite}
+    bias (1,1) {mustBeFloat,mustBeReal,mustBeFinite}
 end
+q = 1.602176634e-19;
+kB = 1.380649e-23;
+Nx = mat.Nx; Ny = mat.Ny; N = Nx*Ny;
+validateattributes(M,{'double','single'},{'size',[N,N]});
+validateattributes(n,{'double','single'},{'size',[Nx,Ny]});
+validateattributes(phi0,{'double','single'},{'size',[Nx,Ny]});
+[Nd,Na] = get_RTD_doping_SI(mat);
+if isequal(size(node_num),[Nx+2,Ny+2]) && isequal(size(node_type),[Nx+2,Ny+2])
+    ids = node_num(2:Nx+1,2:Ny+1);
+    types = node_type(2:Nx+1,2:Ny+1);
+else
+    ids = node_num; types = node_type;
+end
+if ~isequal(ids,reshape(1:N,Nx,Ny)) || ~isequal(size(types),[Nx,Ny])
+    error('RTD:PoissonNodeMap','Rebuild the node maps with eval_Poisson2D_rtd.');
+end
+periodic = any(types(:)==3);
+Nu = Ny-double(periodic);
+if periodic && (~all(types(:,end)==3) || any(any(types(:,1:Nu)==3)))
+    error('RTD:PoissonNodeMap','Only the final Y column may contain periodic duplicates.');
+end
+bc = zeros(Nx,Ny); bc(end,:) = bias;
+if isfield(mat,'Vbc') && ~isempty(mat.Vbc), bc = mat.Vbc; end
+validateattributes(bc,{'double','single'},{'real','finite','size',[Nx,Ny]});
+if periodic
+    requirePeriodic(n,'electron density');
+    requirePeriodic(Nd,'donor density'); requirePeriodic(Na,'acceptor density');
+    requirePeriodic(bc,'contact potential'); requirePeriodic(phi0,'initial potential');
+end
+uniqueTypes = types(:,1:Nu);
+free = find(uniqueTypes(:)==1); fixed = find(uniqueTypes(:)==2);
+if numel(free)+numel(fixed) ~= Nx*Nu || isempty(fixed)
+    error('RTD:PoissonNodeMap','Invalid or ungrounded Poisson node types.');
+end
+% Reduce the duplicate Y endpoint, avoiding an extra physical cell/charge.
+map = reshape(1:Nx*Nu,Nx,Nu);
+if periodic, map = [map,map(:,1)]; end
+expand = sparse(1:N,map(:),1,N,Nx*Nu);
+A = double(M(1:Nx*Nu,:))*expand;
+old = double(phi0(:,1:Nu)); old = old(:);
+bc = double(bc(:,1:Nu)); bc = bc(:);
+nf = double(n(:,1:Nu)); nf = nf(:);
+net = Nd(:,1:Nu)-Na(:,1:Nu); net = net(:);
+charge = q*(nf-net);
+v = old; v(fixed) = bc(fixed);
+Av = A*v;
+F = Av-charge;
+scale = max([norm(q*nf(free),Inf),norm(q*net(free),Inf),norm(Av(free),Inf),q]);
+mode = 'direct'; alpha = 1;
+if isfield(mat,'poisson') && isfield(mat.poisson,'opt')
+    opt = mat.poisson.opt;
+    if isfield(opt,'solve'), mode = lower(char(opt.solve)); end
+    if isfield(opt,'alpha'), alpha = opt.alpha; end
+end
+validateattributes(alpha,{'numeric'},{'real','finite','scalar','>',0,'<=',1});
+Aff = A(free,free);
+switch mode
+    case 'direct'
+        delta = -(Aff\F(free));
+        J = Aff;
+        derivativeModel = 'fixed transport density';
+    case {'newton-raphson','newton-rhapson'}
+        validateattributes(mat.Temp,{'numeric'},{'real','finite','scalar','positive'});
+        J = Aff-spdiags(q^2*nf(free)/(kB*mat.Temp),0,numel(free),numel(free));
+        delta = -(J\F(free));
+        derivativeModel = 'local Boltzmann approximate quantum-density Jacobian';
+    otherwise
+        error('RTD:UnknownPoissonMethod','Use direct or newton-raphson, not %s.',mode);
+end
+linearRelres = norm(J*delta+F(free),Inf)/max(norm(F(free),Inf),q);
+target = v; target(free) = v(free)+delta;
+updated = v; updated(free) = v(free)+alpha*delta;
+phi = reshape(expand*updated,Nx,Ny);
+iter_err = norm(updated(free)-old(free));
+after = A*updated-charge;
+info = struct('converged',all(isfinite(updated)) && isfinite(linearRelres) && linearRelres<1e-8, ...
+    'method',mode,'derivativeModel',derivativeModel,'linearRelres',linearRelres, ...
+    'physicalRelresBefore',norm(F(free),Inf)/scale, ...
+    'physicalRelresAfter',norm(after(free),Inf)/scale, ...
+    'physicalResidualBefore',norm(F(free),Inf),'residualScale',scale, ...
+    'unmixedStep',norm(delta,Inf),'alpha',alpha, ...
+    'candidateUnmixed',reshape(expand*target,Nx,Ny), ...
+    'note','converged refers to the linear update; recompute quantum density for outer convergence.');
+end
+
+function requirePeriodic(value,label)
+if max(abs(value(:,1)-value(:,end))) > 1e-10*max([1;abs(value(:))])
+    error('RTD:NonperiodicPoissonData','The %s must agree at the included Y endpoints.',label);
+end
+end
+

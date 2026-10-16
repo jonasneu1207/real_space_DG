@@ -1,8 +1,9 @@
 function [results,mat] = run_RTD_full2D(options)
 %RUN_RTD_FULL2D Constant-mass RTD with periodic Y and open X contacts.
 % options: Ly,dy in nm, bias in V, removeBarriers (logical), dg (overrides).
-% simulation='flatband' (default) or 'self-consistent'. The latter requires
-% options.selfConsistent.poissonStep: only loop scaffolding is implemented.
+% simulation='flatband' (default) or 'self-consistent'. For self-consistency,
+% options.selfConsistent.poissonMethod selects direct or newton-raphson.
+% An optional poissonStep callback overrides the built-in Poisson solver.
 if nargin < 1, options = struct; end
 rtdDir = fileparts(mfilename('fullpath'));
 originalPath = path;
@@ -38,13 +39,16 @@ params = struct('full2D',true,'N_K_X',3,'N_K_Y',3, ...
     'full2D_lineRelativeShift',0.03, ...
     'full2D_solverTol',1e-3,'full2D_solverMaxIt',100, ...
     'full2D_showSolverProgress',true);
+simulation = option(options,'simulation','flatband');
+if strcmpi(simulation,'self-consistent')
+    params.full2D_solverTol = 1e-8; % tighter default for coupled charge convergence
+end
 overrides = option(options,'dg',struct);
 fields = fieldnames(overrides);
 for k = 1:numel(fields)
     params.(fields{k}) = overrides.(fields{k});
 end
 mat.dg.params = params;
-simulation = option(options,'simulation','flatband');
 switch lower(char(simulation))
     case 'flatband'
         results = solve2D_rtd_stat_flatband('DG',mat);

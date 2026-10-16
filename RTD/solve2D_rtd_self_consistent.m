@@ -1,17 +1,20 @@
 function results = solve2D_rtd_self_consistent(solver,mat,options)
-%SOLVE2D_RTD_SELF_CONSISTENT Warm-started transport / Poisson loop scaffold.
-% This function implements orchestration, NOT a physical Poisson solver.
-% A caller must explicitly supply options.poissonStep:
+%SOLVE2D_RTD_SELF_CONSISTENT Warm-started DG transport / electrostatic Poisson.
+% Built-in Poisson: options.poissonMethod='direct' or 'newton-raphson'.
+% Newton uses a LOCAL BOLTZMANN APPROXIMATION, not an exact quantum Jacobian.
+% Optionally override the built-in step with options.poissonStep:
 %   [phiCandidate,info] = poissonStep(state,mat)
 % phiCandidate: real finite [mat.Nx,mat.Ny] electrostatic potential in VOLTS.
 % info.converged: scalar logical, convergence of that Poisson step.
 % state.phi, state.bias, state.iteration, state.biasIndex describe the input.
 % state.transport is the full DG result. state.n is sampled on
 % state.densityX [m] x state.densityY [m], NOT necessarily on mat.x x mat.y.
-% The future Poisson adapter must perform a suitable charge-grid transfer.
+% Built-in Poisson conservatively transfers raw transport.nDG in both axes.
 %
 % Options: maxIterations=30, mixing=0.1, potentialTolerance=1e-5 V,
-% densityTolerance=1e-4 (relative), initialPhi=[], initialRho=[].
+% densityTolerance=1e-4, poissonResidualTolerance=1e-5 (both relative),
+% initialPhi=[], initialRho=[]. Built-in convergence also requires the actual
+% Poisson residual at the CURRENT potential and quantum-transport density.
 % Convergence uses the UNMIXED potential defect and density change. Returned
 % rho, phi and Vc always belong to the same last transport evaluation.
 % Only converged transport states are handed to the callback or reused.
@@ -43,8 +46,23 @@ if rampLength <= 0
 end
 ramp = repmat(min(1,max(0,(x-mat.Lc1)/rampLength)),1,mat.Ny);
 periodicY = strcmp(get_YBoundaryType_full2D(mat),'periodic');
+useBuiltInPoisson = isempty(options.poissonStep);
+poissonSetup = struct('method','external-callback');
+if useBuiltInPoisson
+    method = options.poissonMethod;
+    if isempty(method)
+        method = 'direct';
+        if isfield(mat,'poisson') && isfield(mat.poisson,'opt') && isfield(mat.poisson.opt,'solve')
+            method = mat.poisson.opt.solve;
+        end
+    end
+    %% make Poisson step
+    [options.poissonStep,poissonSetup] = make_RTD_poisson_step(mat,method);
+    %%
+end
 rhoGuess = options.initialRho;
 previousPhi = [];
+poissonInfo = struct;
 histories = cell(1,numel(bias));
 sweep = struct('requestedBias',bias);
 for ib = 1:numel(bias)
@@ -59,16 +77,19 @@ for ib = 1:numel(bias)
     history = repmat(struct('iteration',0,'transportFlag',NaN, ...
         'transportRelres',NaN,'warmStartUsed',false,'initialTrueRelres',NaN, ...
         'gmresIterations',0,'densityChange',Inf,'potentialDefect',Inf, ...
-        'poissonConverged',false),options.maxIterations,1);
+        'poissonConverged',false,'poissonPhysicalRelres',NaN),options.maxIterations,1);
     status = 'iteration-limit';
     converged = false;
     for iteration = 1:options.maxIterations
+        poissonInfo = struct; % no stale Poisson diagnostics after transport failure
         V = mat.Vc-phi; % electron energy in eV, electrostatic phi in volts
         efL = mat.Vc(1,1)+0.05;
         efR = mat.Vc(end,1)+0.05-bias(ib);
         if isfield(mat,'EfL'), efL = mat.EfL; end
         if isfield(mat,'EfR'), efR = mat.EfR-bias(ib); end
+        %% solve transport
         transport = solve_transport_DG_full2D(mat,V,efL,efR,rhoGuess);
+        %%
         if isempty(transport.rho)
             error('RTD:SolveSkipped','Transport returned no state; self-consistency cannot continue.');
         end
@@ -94,8 +115,10 @@ for ib = 1:numel(bias)
             'densityX',transport.chi,'densityY',transport.y, ...
             'materialX',mat.x(:)*transport.p.coordinateScale, ...
             'materialY',mat.y(:)*transport.p.coordinateScale);
-        % POISSON INTEGRATION POINT: no legacy Poisson routine is called here.
+        %% Poisson lösen 
+        % Built-in step or explicitly supplied external callback.
         [candidate,poissonInfo] = options.poissonStep(state,mat);
+        %%
         checkPotential(candidate,mat,bias(ib),periodicY);
         if ~isstruct(poissonInfo) || ~isscalar(poissonInfo) ...
                 || ~isfield(poissonInfo,'converged') ...
@@ -104,13 +127,19 @@ for ib = 1:numel(bias)
         end
         h.poissonConverged = poissonInfo.converged;
         h.potentialDefect = max(abs(candidate(:)-phi(:)));
+        poissonResidualOK = true;
+        if useBuiltInPoisson
+            h.poissonPhysicalRelres = poissonInfo.physicalRelresBefore;
+            poissonResidualOK = isfinite(h.poissonPhysicalRelres) ...
+                && h.poissonPhysicalRelres <= options.poissonResidualTolerance;
+        end
         history(iteration) = h;
         if ~poissonInfo.converged
             status = 'poisson-not-converged';
             break
         end
         if h.potentialDefect <= options.potentialTolerance ...
-                && h.densityChange <= options.densityTolerance
+                && h.densityChange <= options.densityTolerance && poissonResidualOK
             status = 'fixed-point-converged';
             converged = true;
             break
@@ -148,18 +177,21 @@ results.Id = mean(sweep.current,1);
 results.n_electron = sweep.density;
 results.Vc = sweep.potential;
 results.mat = mat;
+results.poisson = poissonInfo;
 results.selfConsistency = struct('converged',all(sweep.converged) && ib==numel(bias), ...
     'status',status,'history',{histories(1:ib)},'iterations',sweep.iterations, ...
-    'poissonImplementedHere',false,'poissonCallback',func2str(options.poissonStep), ...
-    'note','Convergence refers to the supplied callback; this scaffold does not validate its Poisson physics.');
+    'poissonImplementedHere',useBuiltInPoisson,'poissonSetup',poissonSetup, ...
+    'poissonCallback',func2str(options.poissonStep), ...
+    'note','Built-in: fully ionized electron-only Poisson; approximate Newton uses local Boltzmann screening. External callbacks remain caller responsibility.');
 end
 
 function options = checkedOptions(input)
 if ~isstruct(input) || ~isscalar(input)
     error('RTD:InvalidSelfConsistencyOptions','options must be a scalar struct.');
 end
-options = struct('poissonStep',[],'maxIterations',30,'mixing',0.1, ...
-    'potentialTolerance',1e-5,'densityTolerance',1e-4,'initialPhi',[],'initialRho',[]);
+options = struct('poissonStep',[],'poissonMethod','','maxIterations',30,'mixing',0.1, ...
+    'potentialTolerance',1e-5,'densityTolerance',1e-4,'poissonResidualTolerance',1e-5, ...
+    'initialPhi',[],'initialRho',[]);
 names = fieldnames(input);
 for i = 1:numel(names)
     if ~isfield(options,names{i})
@@ -167,10 +199,10 @@ for i = 1:numel(names)
     end
     options.(names{i}) = input.(names{i});
 end
-if ~isa(options.poissonStep,'function_handle')
-    error('RTD:PoissonStepRequired', ...
-        'No physical Poisson solver is connected yet. Supply options.poissonStep explicitly; no dummy step is used by default.');
+if ~isempty(options.poissonStep) && ~isa(options.poissonStep,'function_handle')
+    error('RTD:InvalidPoissonCallback','poissonStep must be empty (built-in) or a function handle.');
 end
+validateattributes(options.poissonResidualTolerance,{'numeric'},{'real','finite','scalar','positive'});
 validateattributes(options.maxIterations,{'numeric'},{'real','finite','scalar','integer','positive'});
 validateattributes(options.mixing,{'numeric'},{'real','finite','scalar','>',0,'<=',1});
 validateattributes(options.potentialTolerance,{'numeric'},{'real','finite','scalar','positive'});
