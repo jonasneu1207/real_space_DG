@@ -4,9 +4,10 @@ addpath(fileparts(mfilename('fullpath')));
 options = struct;
 options.Ly = 3;                 % nm, physical transverse period W
 options.dy = 0.25;               % nm, material-grid sampling
+options.simulation = 'self-consistent';
 options.bias = 0.1;               % V; a vector enables a fixed-potential sweep
-options.dg.N_el_X = 100;
-options.dg.N_el_Y = 4;          % even, so the two-particle half shift is exact
+options.dg.N_el_X = 120;
+options.dg.N_el_Y = 2;          % even, so the two-particle half shift is exact
 options.dg.N_rho_x = 120;
 options.dg.N_rho_y = 20;        % even; L_rho_y = 2*W is set by the runner
 options.dg.L_rho_x = 100e-9;     % m
@@ -14,7 +15,7 @@ options.dg.full2D_solver = 'gmres';
 options.dg.full2D_preconditioner = 'line-transverse';
 options.dg.full2D_gmresRestart = 40; % RTD starting value, not a universal optimum
 options.dg.full2D_lineRelativeShift = 0.003;
-options.dg.full2D_solverTol = 1e-4;
+options.dg.full2D_solverTol = 1e-5;
 options.dg.full2D_gpu = true;  % enable manually on the GPU machine
 % options.removeBarriers = true; % homogeneous equilibrium check
 % options.dg.full2D_periodicModeOrder = 0; % only k_y=0, clean 1D comparison

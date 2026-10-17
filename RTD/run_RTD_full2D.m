@@ -41,7 +41,7 @@ params = struct('full2D',true,'N_K_X',3,'N_K_Y',3, ...
     'full2D_showSolverProgress',true);
 simulation = option(options,'simulation','flatband');
 if strcmpi(simulation,'self-consistent')
-    params.full2D_solverTol = 1e-8; % tighter default for coupled charge convergence
+    params.full2D_solverTol = 1e-5; % tighter default for coupled charge convergence
 end
 overrides = option(options,'dg',struct);
 fields = fieldnames(overrides);
