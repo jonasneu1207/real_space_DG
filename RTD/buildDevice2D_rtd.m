@@ -9,13 +9,13 @@ switch device
         a   = 0.5;
         dx  = a/2;
 
-        Lc1 = ceil(20/a)*a;
-        Ls1 = ceil(8/a)*a;
+        Lc1 = ceil(30/a)*a;
+        Ls1 = ceil(10/a)*a;
         Lb1 = ceil(3/a)*a;
-        Lw  = ceil(5/a)*a;
+        Lw  = ceil(4/a)*a;
         Lb2 = ceil(3/a)*a;
-        Ls2 = ceil(8/a)*a;
-        Lc2 = ceil(20/a)*a; 
+        Ls2 = ceil(10/a)*a;
+        Lc2 = ceil(30/a)*a; 
         Ndb = 2E+18;
         Ndw = 0*1E+17;
 

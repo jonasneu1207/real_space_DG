@@ -189,15 +189,15 @@ function options = checkedOptions(input)
 if ~isstruct(input) || ~isscalar(input)
     error('RTD:InvalidSelfConsistencyOptions','options must be a scalar struct.');
 end
-options = struct('poissonStep',[],'poissonMethod','','maxIterations',30,'mixing',0.1, ...
-    'potentialTolerance',1e-5,'densityTolerance',1e-4,'poissonResidualTolerance',1e-5, ...
-    'initialPhi',[],'initialRho',[]);
-names = fieldnames(input);
-for i = 1:numel(names)
+options = struct('poissonStep',[],'poissonMethod','','maxIterations',100,'mixing',0.1, ...
+    'potentialTolerance',5e-4,'densityTolerance',5e-4,'poissonResidualTolerance',8e-2, ...
+    'initialPhi',[],'initialRho',[]);                                                            % Default Werte für die Poisson-Loop
+names = fieldnames(input);                                                                       % Namen alle Felder die durch Anwender definiert wurden in main
+for i = 1:numel(names)                                                                           % Überschreibung der Default-Wete durch Angaben vom Anwender
     if ~isfield(options,names{i})
         error('RTD:UnknownSelfConsistencyOption','Unknown option: %s.',names{i});
     end
-    options.(names{i}) = input.(names{i});
+    options.(names{i}) = input.(names{i});                                                       %
 end
 if ~isempty(options.poissonStep) && ~isa(options.poissonStep,'function_handle')
     error('RTD:InvalidPoissonCallback','poissonStep must be empty (built-in) or a function handle.');

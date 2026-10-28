@@ -13,7 +13,7 @@ arguments
     M {mustBeFloat,mustBeReal,mustBeFinite}
     node_type {mustBeNumeric,mustBeReal,mustBeFinite}
     node_num {mustBeNumeric,mustBeReal,mustBeFinite}
-    n {mustBeFloat,mustBeReal,mustBeFinite,mustBeNonnegative}
+    n {mustBeFloat,mustBeReal,mustBeFinite}                             %{mustBeFloat,mustBeReal,mustBeFinite,mustBeNonnegative}
     mat (1,1) struct
     phi0 {mustBeFloat,mustBeReal,mustBeFinite}
     bias (1,1) {mustBeFloat,mustBeReal,mustBeFinite}

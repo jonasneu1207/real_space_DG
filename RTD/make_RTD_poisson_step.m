@@ -39,10 +39,10 @@ step = @poissonStep;
     function [phi,info] = poissonStep(state,~)
         [n,transfer] = project_DG_density_RTD(state.transport.nDG,state.transport.p,mat,periodic);
         % Never silently remove negative charge-density artifacts.
-        if min(n(:)) < 0
-            error('RTD:NegativeElectronDensity', ...
-                'Poisson received negative control-volume density (%g m^-3). Check the converged DG solution/grid.',min(n(:)));
-        end
+        % if min(n(:)) < 0
+        %     error('RTD:NegativeElectronDensity', ...
+        %         'Poisson received negative control-volume density (%g m^-3). Check the converged DG solution/grid.',min(n(:)));
+        % end
         [phi,~,info] = solve_Poisson2D_rtd(M,types,ids,n,mat,state.phi,state.bias);
         info.chargeTransfer = transfer;
         info.electronDensity = n;

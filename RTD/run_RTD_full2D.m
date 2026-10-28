@@ -37,16 +37,16 @@ params = struct('full2D',true,'N_K_X',3,'N_K_Y',3, ...
     'full2D_solve',true,'full2D_solver','gmres','full2D_gpu',false, ...
     'full2D_preconditioner','line-transverse','full2D_gmresRestart',80, ...
     'full2D_lineRelativeShift',0.03, ...
-    'full2D_solverTol',1e-3,'full2D_solverMaxIt',100, ...
+    'full2D_solverTol',1e-3,'full2D_solverMaxIt',150, ...
     'full2D_showSolverProgress',true);
 simulation = option(options,'simulation','flatband');
 if strcmpi(simulation,'self-consistent')
-    params.full2D_solverTol = 1e-5; % tighter default for coupled charge convergence
+    params.full2D_solverTol = 5e-6; % tighter default for coupled charge convergence
 end
 overrides = option(options,'dg',struct);
 fields = fieldnames(overrides);
 for k = 1:numel(fields)
-    params.(fields{k}) = overrides.(fields{k});
+    params.(fields{k}) = overrides.(fields{k});     % Jedes Feld in params, das bereits durch options (also in der main) definiert wurde, wird hier mit dem Wert aus options überschrieben
 end
 mat.dg.params = params;
 switch lower(char(simulation))
