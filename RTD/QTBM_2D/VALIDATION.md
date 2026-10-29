@@ -1,5 +1,13 @@
 # QTBM-Validierung, 28.10.2026
 
+**Ergaenzung 29.10.2026:** Die gemeinsame Poisson-Behandlung ist inzwischen
+zwischen Dirichlet und Neumann in X umschaltbar, Y bleibt periodisch.
+Die neue Validierung fuer DG und QTBM steht unter
+[Poisson-Randbedingungen](../POISSON_BOUNDARIES.md#validierung-vom-29102026).
+Die folgenden Angaben dokumentieren den Dirichlet-Stand vom 28.10.;
+die dort genannten strengen Toleranzen sind Testeinstellungen. Die vom
+Anwender zwischenzeitlich geaenderten QTBM-Standardtoleranzen bleiben erhalten.
+
 Device: `n-RTD-constM-comp`, dx=0.25 nm, W=3 nm, dy=0.25 nm,
 periodische Moden n=-2:2, T=300 K. Unveraenderte gemeinsame
 Device-/Poisson-Funktionen und unveraenderter DG-Code.

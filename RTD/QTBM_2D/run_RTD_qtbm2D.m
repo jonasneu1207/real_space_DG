@@ -9,11 +9,25 @@ addpath(rtdDir);
 mat = buildDevice2D_rtd('n-RTD-constM-comp',options.Ly,options.dy);
 mat.Vdd = options.bias;
 mat.poisson.yBoundary = 'periodic';
+mat.poisson.xBoundary = options.poissonXBoundary;
 mat.poisson.opt.solve = options.poissonMethod; mat.poisson.opt.alpha = 1;
+neumannX = strcmp(options.poissonXBoundary,'neumann');
+builtInVoltage = 0;
+if neumannX
+    neutralContacts = get_contacts_qtbm2D(mat,mat.Vc,options);
+    neutral = get_occupation_qtbm2D(mat,neutralContacts,[],options);
+    builtInVoltage = neutral.drain.muEV-neutral.source.muEV;
+    mat.reservoirReference = struct('sourceMuEV',neutral.source.muEV, ...
+        'neutralDrainMuEV',neutral.drain.muEV,'builtInVoltage',builtInVoltage, ...
+        'sourceCalibration',neutral.source,'drainCalibration',neutral.drain);
+end
 ramp = bias_ramp_qtbm2D(mat);
-phi0 = repmat(options.bias(1)*ramp,1,mat.Ny);
+phi0 = repmat((options.bias(1)+builtInVoltage)*ramp,1,mat.Ny);
 potentialEV = mat.Vc-phi0;
 contacts = get_contacts_qtbm2D(mat,potentialEV,options);
+if neumannX
+    contacts.fixedMuEV = mat.reservoirReference.sourceMuEV-[0,options.bias(1)];
+end
 poisson = prepare_poisson_qtbm2D(mat);
 if strcmp(options.simulation,'prepare')
     result = struct('status','prepared','transportImplemented',true, ...
@@ -26,8 +40,9 @@ if strcmp(options.simulation,'self-consistent')
 else
     points = cell(1,numel(options.bias));
     for k = 1:numel(options.bias)
-        phi = repmat(options.bias(k)*ramp,1,mat.Ny); potentialEV = mat.Vc-phi;
+        phi = repmat((options.bias(k)+builtInVoltage)*ramp,1,mat.Ny); potentialEV = mat.Vc-phi;
         contacts = get_contacts_qtbm2D(mat,potentialEV,options);
+        if neumannX, contacts.fixedMuEV = mat.reservoirReference.sourceMuEV-[0,options.bias(k)]; end
         transport = solve_transport_qtbm2D(mat,potentialEV,contacts,options);
         [nPoisson,projection] = project_density_qtbm2D(transport,mat);
         points{k} = struct('bias',options.bias(k),'phi',phi,'potentialEV',potentialEV, ...

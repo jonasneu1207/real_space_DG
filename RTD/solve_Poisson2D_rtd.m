@@ -9,6 +9,9 @@ function [phi,iter_err,info] = solve_Poisson2D_rtd(M,node_type,node_num,n,mat,ph
 % opt.alpha damps the update (default 1); the coupled runner mixes externally.
 % info.converged means the LINEAR UPDATE was solved, not self-consistency.
 % physicalRelresBefore tests Poisson with the actual input transport density.
+% Pure Neumann X uses Newton screening with fixed reservoir chemical
+% potentials. No gauge pin and no subtraction of net charge are applied.
+% Direct fixed-charge inversion is deliberately rejected for this mode.
 arguments
     M {mustBeFloat,mustBeReal,mustBeFinite}
     node_type {mustBeNumeric,mustBeReal,mustBeFinite}
@@ -25,6 +28,11 @@ validateattributes(M,{'double','single'},{'size',[N,N]});
 validateattributes(n,{'double','single'},{'size',[Nx,Ny]});
 validateattributes(phi0,{'double','single'},{'size',[Nx,Ny]});
 [Nd,Na] = get_RTD_doping_SI(mat);
+xBoundary = get_RTD_poisson_x_boundary(mat);
+neumannX = strcmp(xBoundary,'neumann');
+if neumannX && isfield(mat,'Vbc') && ~isempty(mat.Vbc)
+    error('RTD:PoissonBoundaryConflict','Do not supply fixed mat.Vbc with Neumann X.');
+end
 if isequal(size(node_num),[Nx+2,Ny+2]) && isequal(size(node_type),[Nx+2,Ny+2])
     ids = node_num(2:Nx+1,2:Ny+1);
     types = node_type(2:Nx+1,2:Ny+1);
@@ -49,7 +57,8 @@ if periodic
 end
 uniqueTypes = types(:,1:Nu);
 free = find(uniqueTypes(:)==1); fixed = find(uniqueTypes(:)==2);
-if numel(free)+numel(fixed) ~= Nx*Nu || isempty(fixed)
+if numel(free)+numel(fixed) ~= Nx*Nu || (~neumannX && isempty(fixed)) ...
+        || (neumannX && ~isempty(fixed))
     error('RTD:PoissonNodeMap','Invalid or ungrounded Poisson node types.');
 end
 % Reduce the duplicate Y endpoint, avoiding an extra physical cell/charge.
@@ -76,11 +85,19 @@ validateattributes(alpha,{'numeric'},{'real','finite','scalar','>',0,'<=',1});
 Aff = A(free,free);
 switch mode
     case 'direct'
+        if neumannX
+            error('RTD:NeumannNeedsNewton', ...
+                'Neumann X requires newton-raphson and fixed reservoir Fermi levels, not direct fixed-charge inversion.');
+        end
         delta = -(Aff\F(free));
         J = Aff;
         derivativeModel = 'fixed transport density';
     case {'newton-raphson','newton-rhapson'}
         validateattributes(mat.Temp,{'numeric'},{'real','finite','scalar','positive'});
+        if neumannX && (any(nf<0) || ~any(nf>0))
+            error('RTD:NeumannDensityResponse', ...
+                'Neumann Newton needs nonnegative electron density with a positive screening response. Check the transport discretization.');
+        end
         J = Aff-spdiags(q^2*nf(free)/(kB*mat.Temp),0,numel(free),numel(free));
         delta = -(J\F(free));
         derivativeModel = 'local Boltzmann approximate quantum-density Jacobian';
@@ -93,7 +110,17 @@ updated = v; updated(free) = v(free)+alpha*delta;
 phi = reshape(expand*updated,Nx,Ny);
 iter_err = norm(updated(free)-old(free));
 after = A*updated-charge;
+% Physical charge per unit unresolved z length [C/m]. Count the periodic
+% endpoint once and use HALF X control volumes, including for diagnostics.
+wx = ones(Nx,1)*mat.dx*1e-9; wx([1,end]) = wx([1,end])/2;
+wy = ones(1,Nu)*mat.dy*1e-9;
+if ~periodic && Nu>1, wy([1,end]) = wy([1,end])/2; end
+volumes = wx*wy; volumes = volumes(:);
+netCharge = -sum(volumes.*charge);
+chargeMagnitude = max(q*max(sum(volumes.*abs(net)),sum(volumes.*abs(nf))),realmin);
 info = struct('converged',all(isfinite(updated)) && isfinite(linearRelres) && linearRelres<1e-8, ...
+    'xBoundary',xBoundary,'neumannCompatibilityRequired',neumannX, ...
+    'netChargePerLength',netCharge,'relativeChargeImbalance',abs(netCharge)/chargeMagnitude, ...
     'method',mode,'derivativeModel',derivativeModel,'linearRelres',linearRelres, ...
     'physicalRelresBefore',norm(F(free),Inf)/scale, ...
     'physicalRelresAfter',norm(after(free),Inf)/scale, ...

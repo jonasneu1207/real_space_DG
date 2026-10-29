@@ -19,6 +19,9 @@ function results = solve2D_rtd_self_consistent(solver,mat,options)
 % rho, phi and Vc always belong to the same last transport evaluation.
 % Only converged transport states are handed to the callback or reused.
 % A converged previous bias also seeds the next bias on the same fixed grid.
+% options.poissonXBoundary: 'dirichlet' (default) or 'neumann'. Neumann
+% keeps Y periodic, calibrates contact modes ONCE and fixes muS-muD=bias.
+% chargeNeutralityTolerance additionally checks the global Neumann balance.
 if nargin < 3, options = struct; end
 options = checkedOptions(options);
 if ~strcmpi(solver,'DG')
@@ -46,12 +49,29 @@ if rampLength <= 0
 end
 ramp = repmat(min(1,max(0,(x-mat.Lc1)/rampLength)),1,mat.Ny);
 periodicY = strcmp(get_YBoundaryType_full2D(mat),'periodic');
+if ~isempty(options.poissonXBoundary), mat.poisson.xBoundary = options.poissonXBoundary; end
+xBoundary = get_RTD_poisson_x_boundary(mat);
+mat.poisson.xBoundary = xBoundary;
+neumannX = strcmp(xBoundary,'neumann');
+reservoirReference = []; builtInVoltage = 0;
+if neumannX
+    if ~periodicY
+        error('RTD:PoissonBoundaryMismatch','Neumann RTD contacts require periodic Y.');
+    end
+    if isfield(mat.poisson,'yBoundary') && ~strcmpi(mat.poisson.yBoundary,'periodic')
+        error('RTD:PoissonBoundaryMismatch','Neumann RTD contacts require periodic Poisson Y.');
+    end
+    mat.poisson.yBoundary = 'periodic';
+    [mat,reservoirReference] = prepare_RTD_neumann_contacts(mat);
+    builtInVoltage = reservoirReference.builtInVoltage;
+end
 useBuiltInPoisson = isempty(options.poissonStep);
 poissonSetup = struct('method','external-callback');
 if useBuiltInPoisson
     method = options.poissonMethod;
     if isempty(method)
         method = 'direct';
+        if neumannX, method = 'newton-raphson'; end
         if isfield(mat,'poisson') && isfield(mat.poisson,'opt') && isfield(mat.poisson.opt,'solve')
             method = mat.poisson.opt.solve;
         end
@@ -67,7 +87,7 @@ histories = cell(1,numel(bias));
 sweep = struct('requestedBias',bias);
 for ib = 1:numel(bias)
     if ib == 1
-        phi = bias(ib)*ramp;
+        phi = (bias(ib)+builtInVoltage)*ramp;
         if ~isempty(options.initialPhi), phi = options.initialPhi; end
     else
         phi = previousPhi+(bias(ib)-bias(ib-1))*ramp;
@@ -77,7 +97,8 @@ for ib = 1:numel(bias)
     history = repmat(struct('iteration',0,'transportFlag',NaN, ...
         'transportRelres',NaN,'warmStartUsed',false,'initialTrueRelres',NaN, ...
         'gmresIterations',0,'densityChange',Inf,'potentialDefect',Inf, ...
-        'poissonConverged',false,'poissonPhysicalRelres',NaN),options.maxIterations,1);
+        'poissonConverged',false,'poissonPhysicalRelres',NaN, ...
+        'relativeChargeImbalance',NaN),options.maxIterations,1);
     status = 'iteration-limit';
     converged = false;
     for iteration = 1:options.maxIterations
@@ -87,6 +108,10 @@ for ib = 1:numel(bias)
         efR = mat.Vc(end,1)+0.05-bias(ib);
         if isfield(mat,'EfL'), efL = mat.EfL; end
         if isfield(mat,'EfR'), efR = mat.EfR-bias(ib); end
+        if neumannX
+            efL = reservoirReference.sourceMuEV;
+            efR = efL-bias(ib);
+        end
         %% solve transport
         transport = solve_transport_DG_full2D(mat,V,efL,efR,rhoGuess);
         %%
@@ -128,10 +153,19 @@ for ib = 1:numel(bias)
         h.poissonConverged = poissonInfo.converged;
         h.potentialDefect = max(abs(candidate(:)-phi(:)));
         poissonResidualOK = true;
+        chargeBalanceOK = true;
         if useBuiltInPoisson
             h.poissonPhysicalRelres = poissonInfo.physicalRelresBefore;
             poissonResidualOK = isfinite(h.poissonPhysicalRelres) ...
                 && h.poissonPhysicalRelres <= options.poissonResidualTolerance;
+        end
+        if neumannX
+            if ~isfield(poissonInfo,'relativeChargeImbalance')
+                error('RTD:NeumannChargeDiagnostic','Neumann Poisson callbacks must report relativeChargeImbalance.');
+            end
+            h.relativeChargeImbalance = poissonInfo.relativeChargeImbalance;
+            chargeBalanceOK = isfinite(h.relativeChargeImbalance) ...
+                && h.relativeChargeImbalance <= options.chargeNeutralityTolerance;
         end
         history(iteration) = h;
         if ~poissonInfo.converged
@@ -139,7 +173,7 @@ for ib = 1:numel(bias)
             break
         end
         if h.potentialDefect <= options.potentialTolerance ...
-                && h.densityChange <= options.densityTolerance && poissonResidualOK
+                && h.densityChange <= options.densityTolerance && poissonResidualOK && chargeBalanceOK
             status = 'fixed-point-converged';
             converged = true;
             break
@@ -161,6 +195,7 @@ for ib = 1:numel(bias)
     sweep.relres(ib) = transport.info.solve.relres;
     sweep.converged(ib) = converged;
     sweep.iterations(ib) = iteration;
+    if neumannX, sweep.reservoirMuEV(:,ib) = [efL;efR]; end
     sweep.status{ib} = status;
     if ~converged
         break % no bias continuation with an unconverged state
@@ -181,6 +216,7 @@ results.poisson = poissonInfo;
 results.selfConsistency = struct('converged',all(sweep.converged) && ib==numel(bias), ...
     'status',status,'history',{histories(1:ib)},'iterations',sweep.iterations, ...
     'poissonImplementedHere',useBuiltInPoisson,'poissonSetup',poissonSetup, ...
+    'poissonXBoundary',xBoundary,'reservoirReference',reservoirReference, ...
     'poissonCallback',func2str(options.poissonStep), ...
     'note','Built-in: fully ionized electron-only Poisson; approximate Newton uses local Boltzmann screening. External callbacks remain caller responsibility.');
 end
@@ -189,8 +225,9 @@ function options = checkedOptions(input)
 if ~isstruct(input) || ~isscalar(input)
     error('RTD:InvalidSelfConsistencyOptions','options must be a scalar struct.');
 end
-options = struct('poissonStep',[],'poissonMethod','','maxIterations',100,'mixing',0.1, ...
+options = struct('poissonStep',[],'poissonMethod','','poissonXBoundary','','maxIterations',100,'mixing',0.1, ...
     'potentialTolerance',5e-4,'densityTolerance',5e-4,'poissonResidualTolerance',8e-2, ...
+    'chargeNeutralityTolerance',1e-3, ...
     'initialPhi',[],'initialRho',[]);                                                            % Default Werte für die Poisson-Loop
 names = fieldnames(input);                                                                       % Namen alle Felder die durch Anwender definiert wurden in main
 for i = 1:numel(names)                                                                           % Überschreibung der Default-Wete durch Angaben vom Anwender
@@ -203,6 +240,10 @@ if ~isempty(options.poissonStep) && ~isa(options.poissonStep,'function_handle')
     error('RTD:InvalidPoissonCallback','poissonStep must be empty (built-in) or a function handle.');
 end
 validateattributes(options.poissonResidualTolerance,{'numeric'},{'real','finite','scalar','positive'});
+validateattributes(options.chargeNeutralityTolerance,{'numeric'},{'real','finite','scalar','positive'});
+if ~isempty(options.poissonXBoundary)
+    options.poissonXBoundary = validatestring(options.poissonXBoundary,{'dirichlet','neumann'});
+end
 validateattributes(options.maxIterations,{'numeric'},{'real','finite','scalar','integer','positive'});
 validateattributes(options.mixing,{'numeric'},{'real','finite','scalar','>',0,'<=',1});
 validateattributes(options.potentialTolerance,{'numeric'},{'real','finite','scalar','positive'});
@@ -215,7 +256,8 @@ if ~isfloat(phi) || ~isreal(phi) || ~isequal(size(phi),[mat.Nx,mat.Ny]) ...
     error('RTD:InvalidPoissonPotential','phi must be a finite real CPU array [mat.Nx,mat.Ny] in volts.');
 end
 tolerance = 1e-10*max(1,abs(bias));
-if max(abs(phi(1,:))) > tolerance || max(abs(phi(end,:)-bias)) > tolerance
+if strcmp(get_RTD_poisson_x_boundary(mat),'dirichlet') ...
+        && (max(abs(phi(1,:))) > tolerance || max(abs(phi(end,:)-bias)) > tolerance)
     error('RTD:PoissonContactPotential','This RTD scaffold requires phi(source)=0 and phi(drain)=bias.');
 end
 if periodicY && max(abs(phi(:,1)-phi(:,end))) > tolerance

@@ -3,7 +3,10 @@ function result = solve_self_consistent_qtbm2D(mat,poisson,options)
 % Convergence tests the actual input density/residual and UNMIXED update.
 % Final phi and transport always refer to the same evaluated potential.
 ramp = repmat(bias_ramp_qtbm2D(mat),1,mat.Ny);
-phi = options.bias(1)*ramp; points = cell(1,numel(options.bias));
+neumannX = strcmp(options.poissonXBoundary,'neumann');
+builtInVoltage = 0;
+if neumannX, builtInVoltage = mat.reservoirReference.builtInVoltage; end
+phi = (options.bias(1)+builtInVoltage)*ramp; points = cell(1,numel(options.bias));
 if ~isempty(options.initialPhi)
     validateattributes(options.initialPhi,{'double'},{'real','finite','size',[mat.Nx,mat.Ny]});
     phi = options.initialPhi;
@@ -12,20 +15,22 @@ status = 'self-consistent-complete';
 % Restriction of the SHARED Poisson operator to the Y-homogeneous subspace.
 A = poisson.matrix(1:mat.Nx,:)*repmat(speye(mat.Nx),mat.Ny,1);
 free = 2:mat.Nx-1; q = 1.602176634e-19;
+if neumannX, free = 1:mat.Nx; end
 chargeScale = q*max(mat.Nd(:));
 if isfield(mat,'Na'), acceptors = mat.Na(:,1); else, acceptors = mat.N_a(:,1)*1e6; end
 net = mat.Nd(:,1)-acceptors;
 for k = 1:numel(options.bias)
     bias = options.bias(k);
     if k>1, phi = phi+(bias-options.bias(k-1))*ramp; end
-    phi(1,:) = 0; phi(end,:) = bias;
-    previousDensity = []; history = nan(options.maxIterations,5);
+    if ~neumannX, phi(1,:) = 0; phi(end,:) = bias; end
+    previousDensity = []; history = nan(options.maxIterations,6);
     converged = false; xHistory = []; rHistory = []; lastResidual = Inf;
     baseX = []; trialStep = []; backtracks = 0;
     inverseJacobian = []; previousX = []; previousF = [];
     for iteration = 1:options.maxIterations
         potentialEV = mat.Vc-phi;
         contacts = get_contacts_qtbm2D(mat,potentialEV,options);
+        if neumannX, contacts.fixedMuEV = mat.reservoirReference.sourceMuEV-[0,bias]; end
         transport = solve_transport_qtbm2D(mat,potentialEV,contacts,options);
         [nPoisson,projection] = project_density_qtbm2D(transport,mat);
         state = struct('phi',phi,'bias',bias,'nPoisson',nPoisson);
@@ -38,7 +43,7 @@ for k = 1:numel(options.bias)
         end
         history(iteration,:) = [pInfo.unmixedStep,densityChange, ...
             pInfo.physicalRelresBefore,transport.currentDensity, ...
-            transport.diagnostics.energy.evaluations];
+            transport.diagnostics.energy.evaluations,pInfo.relativeChargeImbalance];
         if options.verbose && (iteration==1 || mod(iteration,10)==0)
             fprintf('QTBM V=%.4g, it=%d: dphi=%.3g V, dn=%.3g, Poisson=%.3g\n', ...
                 bias,iteration,pInfo.unmixedStep,densityChange,pInfo.physicalRelresBefore);
@@ -49,13 +54,14 @@ for k = 1:numel(options.bias)
                 && backtracks<8 && iteration<options.maxIterations
             trialStep = trialStep/2;
             phi = repmat(baseX+trialStep,1,mat.Ny);
-            phi(1,:) = 0; phi(end,:) = bias;
+            if ~neumannX, phi(1,:) = 0; phi(end,:) = bias; end
             backtracks = backtracks+1;
             continue
         end
         converged = pInfo.unmixedStep<=options.potentialTolerance ...
             && densityChange<=options.densityTolerance ...
-            && pInfo.physicalRelresBefore<=options.poissonResidualTolerance;
+            && pInfo.physicalRelresBefore<=options.poissonResidualTolerance ...
+            && (~neumannX || pInfo.relativeChargeImbalance<=options.chargeNeutralityTolerance);
         if converged || iteration==options.maxIterations, break; end
         previousDensity = nPoisson;
         % Couple transport to the shared approximate-Newton Poisson map.
@@ -97,13 +103,13 @@ for k = 1:numel(options.bias)
         baseX = x; trialStep = step; backtracks = 0;
         phi = repmat(x+step,1,mat.Ny);
         lastResidual = pInfo.unmixedStep;
-        phi(1,:) = 0; phi(end,:) = bias;
+        if ~neumannX, phi(1,:) = 0; phi(end,:) = bias; end
     end
     points{k} = struct('bias',bias,'phi',phi,'potentialEV',potentialEV, ...
         'transport',transport,'nPoisson',nPoisson,'projection',projection, ...
         'converged',converged,'iterations',iteration,'poissonInfo',pInfo, ...
         'history',array2table(history(1:iteration,:),'VariableNames', ...
-        {'unmixedStepV','densityChange','poissonResidual','currentDensity','energyEvaluations'}));
+        {'unmixedStepV','densityChange','poissonResidual','currentDensity','energyEvaluations','relativeChargeImbalance'}));
     if options.verbose
         fprintf('QTBM V=%g V: converged=%d, iterations=%d, j=%g A/m^2\n', ...
             bias,converged,iteration,transport.currentDensity);

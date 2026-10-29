@@ -1,6 +1,6 @@
 function poisson = prepare_poisson_qtbm2D(mat)
 %PREPARE_POISSON_QTBM2D Assemble the shared RTD Poisson system without DG.
-% X contacts: phi=0 and phi=bias. Y: periodic, final column is a duplicate.
+% X: selected Dirichlet or homogeneous Neumann. Y: periodic duplicate.
 rtdDir = fileparts(fileparts(mfilename('fullpath')));
 oldPath = path;
 restorePath = onCleanup(@() path(oldPath));

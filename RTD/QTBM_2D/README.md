@@ -18,7 +18,7 @@ Ordner werden innerhalb der Funktionen voruebergehend eingebunden.
 
 ```matlab
 addpath('RTD/QTBM_2D')
-eq = main2D_rtd_qtbm;  % selbstkonsistentes Gleichgewicht, Bias 0 V
+eq = main2D_rtd_qtbm(struct('bias',0)); % selbstkonsistentes Gleichgewicht
 
 fixed = main2D_rtd_qtbm(struct( ...
     'simulation','fixed-potential','bias',0:0.02:0.6));
@@ -45,13 +45,14 @@ oder Aenderung der DG-Konfiguration.
   Kein kontinuierliches ky-Integral; kz wird kontinuierlich integriert.
 - Kontaktneutralitaet aus derselben mx/mz-Modensummenformel wie DG.
   Fermi-Dirac-Verteilung, Spin-Faktor 2, zusaetzlich `mat.deg_factor`.
-  Die Fermipegel werden an den jeweiligen verschobenen Bandkanten neu
-  bestimmt. Die Spannung wird nicht nochmals von mu abgezogen.
+  Bei Dirichlet werden die Fermipegel an den verschobenen Bandkanten neu
+  bestimmt. Bei Neumann werden sie einmal kalibriert und danach als
+  muSource=mu0, muDrain=mu0-Bias festgehalten.
 - Exakte retardierte Kontakt-Selbstenergien des diskreten Hx.
   Injektion, Zustandsdichte und Bondstrom verwenden dieselbe Dispersion.
   Es gibt keinen CAP und keine kuenstliche imaginaere Energieverbreiterung.
 - `buildDevice2D_rtd`, `eval_Poisson2D_rtd` und
-  `solve_Poisson2D_rtd` werden wiederverwendet: Dirichlet 0/Bias in X,
+  `solve_Poisson2D_rtd` werden wiederverwendet: Dirichlet 0/Bias oder Neumann in X,
   periodisch in Y. Potentialenergie `Vc-phi` in eV.
 - Die nodale QTBM-Dichte wird stueckweise linear rekonstruiert und exakt
   ueber die nodalen Poisson-Kontrollvolumina gemittelt. Halbe X-Randzellen
@@ -70,6 +71,11 @@ sind unterschiedliche Diskretisierungen. Gleiche Geometrie, Besetzung und
 Poisson-Behandlung erzwingen daher noch keine identischen IV-Kurven.
 Die kontinuierliche Kontaktneutralitaet und die diskrete X-Dispersion
 unterscheiden sich um einen mit dx verschwindenden Diskretisierungsfehler.
+
+Die Option `poissonXBoundary='neumann'` aktiviert feldfreie X-Raender bei
+weiterhin periodischem Y. Newton ist dabei erforderlich; die globale
+Ladungsbilanz wird zusaetzlich geprueft. Konfiguration und physikalische
+Details fuer beide Solver: [Poisson-Randbedingungen](../POISSON_BOUNDARIES.md).
 
 ## Numerische Kontrollen
 
@@ -113,7 +119,7 @@ stehen unter `transport.boundStates`.
 | Option | Standard | Bedeutung |
 |---|---:|---|
 | simulation | self-consistent | prepare / fixed-potential / self-consistent |
-| bias | 0 | Spannungsfolge in V, Reihenfolge bleibt erhalten |
+| bias | 0:0.02:0.6 | Spannungsfolge in V, Reihenfolge bleibt erhalten |
 | initialPhi | [] | optionales Startpotential [Nx,Ny] in V fuer den ersten selbstkonsistenten Punkt |
 | Ly / dy | 3 / 0.25 | nm, Breite und Material-/Poisson-Y-Raster |
 | modeOrder | 2 | periodische Moden -2 bis +2 |
@@ -125,12 +131,14 @@ stehen unter `transport.boundStates`.
 | maxEnergyEvaluations | 500000 | Energiebudget pro Transportauswertung |
 | currentTolerance | 1e-6 | relativer Bond-/Landauer-Stromvergleich |
 | poissonMethod | newton-raphson | alternativ direct |
+| poissonXBoundary | dirichlet | alternativ neumann; Y bleibt periodisch |
+| chargeNeutralityTolerance | 1e-3 | globale relative Ladungsabweichung, nur bei Neumann als Abbruchkriterium |
 | couplingMethod | anderson | alternativ broyden, aeusserer nichtlinearer Loeser |
 | maxIterations / mixing | 150 / 0.3 | aeussere Iteration |
 | andersonDepth / maxPotentialStepV | 5 / 0.03 | Mischhistorie und Schrittbegrenzung; Tiefe 0 schaltet Anderson aus |
-| potentialTolerance | 1e-5 | ungemischte Potentialkorrektur in V |
-| densityTolerance | 5e-4 | relative Dichteaenderung |
-| poissonResidualTolerance | 1e-3 | physikalisches Poisson-Residuum |
+| potentialTolerance | 5e-3 | ungemischte Potentialkorrektur in V |
+| densityTolerance | 5e-3 | relative Dichteaenderung |
+| poissonResidualTolerance | 1 | physikalisches Poisson-Residuum |
 | boundStateOccupation | error | Besetzungsannahme nur bei echten gebundenen Zustaenden unter Bias |
 | verbose | true | Iterationsausgabe |
 

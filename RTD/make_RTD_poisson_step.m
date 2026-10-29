@@ -12,9 +12,14 @@ mat.poisson.opt.alpha = 1;
 if ~any(strcmpi(method,{'direct','newton-raphson','newton-rhapson'}))
     error('RTD:UnknownPoissonMethod','Use direct or newton-raphson.');
 end
-% The coupled RTD currently has grounded/source and biased/drain contacts.
+xBoundary = get_RTD_poisson_x_boundary(mat);
+neumannX = strcmp(xBoundary,'neumann');
+if neumannX && strcmpi(method,'direct')
+    error('RTD:NeumannNeedsNewton','Neumann X requires newton-raphson.');
+end
 if isfield(mat,'boundary') && ~isempty(mat.boundary)
-    expected = false(mat.Nx,mat.Ny); expected([1,end],:) = true;
+    expected = false(mat.Nx,mat.Ny);
+    if ~neumannX, expected([1,end],:) = true; end
     if ~isequal(logical(mat.boundary),expected)
         error('RTD:PoissonContactModel','The coupled RTD supports full source/drain contacts only.');
     end

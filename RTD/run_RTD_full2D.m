@@ -54,6 +54,7 @@ switch lower(char(simulation))
         results = solve2D_rtd_stat_flatband('DG',mat);
     case 'self-consistent'
         results = solve2D_rtd_self_consistent('DG',mat,option(options,'selfConsistent',struct));
+        mat = results.mat; % retain Poisson selection and fixed-reservoir calibration
     otherwise
         error('RTD:UnsupportedSimulation','Unknown simulation type: %s.',simulation);
 end

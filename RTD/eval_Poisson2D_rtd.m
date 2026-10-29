@@ -18,6 +18,9 @@ function [M, node_num, node_type, info] = eval_Poisson2D_rtd(mat)
 % Default follows full2D_Y_boundary='periodic', otherwise 'neumann'.
 % node_type: 0 = outside, 1 = free, 2 = Dirichlet, 3 = periodic duplicate.
 % Duplicate rows impose phi(:,end)=phi(:,1), not a second charge equation.
+% mat.poisson.xBoundary='neumann': zero external X flux, including the
+% endpoint half control volumes. No potential pinning; use the coupled
+% Newton step with FIXED reservoir Fermi levels. Default is 'dirichlet'.
     arguments
         mat (1,1) struct
     end
@@ -66,6 +69,7 @@ function [M, node_num, node_type, info] = eval_Poisson2D_rtd(mat)
         error('RTD:PoissonPeriodicMaterial','Periodic Y requires >=3 nodes and matching endpoint permittivities.');
     end
 
+    xBoundary = get_RTD_poisson_x_boundary(mat);
     % Unless explicitly provided, contact nodes occupy x = 0 and x = Lx.
     if isfield(mat, 'boundary') && ~isempty(mat.boundary)
         boundary = mat.boundary;
@@ -76,11 +80,16 @@ function [M, node_num, node_type, info] = eval_Poisson2D_rtd(mat)
         boundary = logical(boundary);
     else
         boundary = false(Nx, Ny);
-        boundary([1, Nx], :) = true;
+        if strcmp(xBoundary,'dirichlet'), boundary([1, Nx], :) = true; end
     end
 
-    assert(any(boundary(:)), ...
-        'At least one Dirichlet node is needed to fix the potential.');
+    if strcmp(xBoundary,'neumann')
+        if any(boundary(:))
+            error('RTD:PoissonBoundaryConflict','Neumann X requires an empty or all-free mat.boundary.');
+        end
+    else
+        assert(any(boundary(:)), 'Dirichlet mode requires at least one fixed potential node.');
+    end
     if periodic && ~isequal(boundary(:,1),boundary(:,end))
         error('RTD:PoissonPeriodicBoundary','Dirichlet masks must agree at the two Y endpoints.');
     end
@@ -189,7 +198,7 @@ function [M, node_num, node_type, info] = eval_Poisson2D_rtd(mat)
     end
 
     M = sparse(row(1:nz), col(1:nz), val(1:nz), N, N);
-    info = struct('yBoundary',yBoundary,'uniqueYNodes',Ny-double(periodic), ...
+    info = struct('xBoundary',xBoundary,'yBoundary',yBoundary,'uniqueYNodes',Ny-double(periodic), ...
         'potentialUnits','V','operator','div(epsilon*grad(phi))', ...
         'source','q*(n-Nd+Na), all densities in m^-3', ...
         'interfaceMean','harmonic','periodicEndpointDuplicated',periodic);
